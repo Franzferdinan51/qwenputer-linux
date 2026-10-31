@@ -143,11 +143,16 @@ class LinuxMachine:
                 return self.uart_regs.get(0, 0)
             return self.inp.pop(0) if self.inp else 0
         if off == 2:
-            # IIR reports the receiver state even with no IRQ line wired
+            # IIR reports the port state even with no IRQ line wired
             # (this port is irq=0): the 8250 driver's backup-timer poll
-            # reads IIR and only drains the receiver when it shows RDA.
-            # A constant NO_INT here starves guest input completely.
-            return 0x04 if self.inp else 0x01
+            # reads IIR and only services the source it names. RDA (0x04)
+            # when input is queued - a constant NO_INT here starved guest
+            # input completely (getty consumed zero bytes in 100M steps).
+            # Otherwise THRE (0x02): the transmitter is always empty in
+            # this model, and THRE is what lets the poll kick the TX path
+            # - without it, a guest write longer than the inline chunk
+            # (~130 bytes) sleeps forever waiting for a wakeup.
+            return 0x04 if self.inp else 0x02
         if off == 5:
             return 0x60 | (1 if self.inp else 0)  # LSR: THR empty, + RX ready
         return self.uart_regs.get(off, 0)

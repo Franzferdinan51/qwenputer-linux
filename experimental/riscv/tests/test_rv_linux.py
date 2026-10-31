@@ -306,17 +306,21 @@ def test_qwen_device_guest_program():
 
 
 def test_uart_iir_reflects_rx_state():
-    # irq=0 port: the guest's backup-timer poll reads IIR to decide whether
-    # to drain the receiver, so IIR must show RDA while input is queued -
-    # a constant NO_INT starved console input after boot (found 2026-10-31:
-    # getty never consumed a single byte in 100M steps).
+    # irq=0 port: the guest's backup-timer poll reads IIR to decide which
+    # side to service. It must show RDA while input is queued - a constant
+    # NO_INT starved console input after boot (found 2026-10-31: getty
+    # never consumed a single byte in 100M steps) - and THRE otherwise:
+    # THRE is the only kick that restarts a blocked transmitter, and
+    # without it guest writes past the inline chunk (~130 bytes) slept
+    # forever (found 2026-10-31: the agent harness's 700-char prompt
+    # stalled mid-line).
     m = LinuxMachine()
-    assert m.read_mem(UART_BASE + 2, 1) == 0x01  # NO_INT, queue empty
+    assert m.read_mem(UART_BASE + 2, 1) == 0x02  # THRE, queue empty
     m.feed_input(b"root\n")
     assert m.read_mem(UART_BASE + 2, 1) == 0x04  # RDA, bytes waiting
     for _ in range(5):
         m.read_mem(UART_BASE, 1)
-    assert m.read_mem(UART_BASE + 2, 1) == 0x01  # drained
+    assert m.read_mem(UART_BASE + 2, 1) == 0x02  # drained: back to THRE
 
 
 def test_qwen_console_line_protocol():

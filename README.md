@@ -45,7 +45,15 @@ there took fixing the UART's interrupt-status register, which had starved consol
 completely. The guest can also **ask the model a question and print its answer**:
 `/tmp/ask "what is the capital of France"` → `The capital of France is **Paris**.`,
 verified end-to-end by `qwentest.py` against both a deterministic echo backend and a
-real LM Studio model (transcripts in `boot-logs/`). New tests: 15 passed. Not yet done:
+real LM Studio model (transcripts in `boot-logs/`). On top of `ask` there is now an
+**agent harness** in the gadget-client shape — the model is the brain, a baked-in
+shell script is the hands: `/tmp/agent write the word banana into /tmp/hello.txt then
+read it back` has the model's tool calls do the work while the harness runs the
+commands, dedupes repeats, and nudges empty replies (`agenttest.py`, transcript in
+`boot-logs/agent-lm.out`; the brain's multi-step follow-through is the limiting
+factor, exactly as expected at this size). Getting the agent's long prompt out of
+the guest took a second UART fix — IIR now reports THRE as well as RDA. New tests:
+15 passed. Not yet done:
 the final phase — porting these enhancements into the compiled in-weights circuit
 itself, so Linux runs inside the model the way C and MicroPython already do. That port
 is specified in the design doc; until it lands, Linux here runs on the reference machine

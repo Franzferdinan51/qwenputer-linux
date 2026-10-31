@@ -1,0 +1,236 @@
+[    0.000000] Linux version 6.1.14 (cnlohr@cnlohr-1520) (riscv32-buildroot-linux-uclibc-gcc.br_real (Buildroot 2023.02-145-gf6c5488ad2) 12.2.0, GNU ld (GNU Binutils) 2.38) #4 Sat Mar 25 09:20:08 EDT 2023
+[    0.000000] Machine model: riscv-minimal-nommu,qemu
+[    0.000000] earlycon: uart8250 at MMIO 0x10000000 (options '1000000')
+[    0.000000] printk: bootconsole [uart8250] enabled
+[    0.000000] Zone ranges:
+[    0.000000]   Normal   [mem 0x0000000080000000-0x0000000083ffbfff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000080000000-0x0000000083ffbfff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000080000000-0x0000000083ffbfff]
+[    0.000000] riscv: base ISA extensions aim
+[    0.000000] riscv: ELF capabilities aim
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 16252
+[    0.000000] Kernel command line: earlycon=uart8250,mmio,0x10000000,1000000 console=ttyS0
+[    0.000000] Dentry cache hash table entries: 8192 (order: 3, 32768 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 4096 (order: 2, 16384 bytes, linear)
+[    0.000000] Sorting __ex_table...
+[    0.000000] mem auto-init: stack:off, heap alloc:off, heap free:off
+[    0.000000] Memory: 61372K/65520K available (1487K kernel code, 281K rwdata, 157K rodata, 1464K init, 145K bss, 4148K reserved, 0K cma-reserved)
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] riscv-intc: 32 local interrupts mapped
+[    0.000000] clint: clint@11000000: timer running at 1000000 Hz
+[    0.000000] clocksource: clint_clocksource: mask: 0xffffffffffffffff max_cycles: 0x1d854df40, max_idle_ns: 3526361616960 ns
+[    0.000404] sched_clock: 64 bits at 1000kHz, resolution 1000ns, wraps every 2199023255500ns
+[    0.110295] Console: colour dummy device 80x25
+[    0.132122] Calibrating delay loop (skipped), value calculated using timer frequency.. 2.00 BogoMIPS (lpj=10000)
+[    0.156194] pid_max: default: 4096 minimum: 301
+[    0.256510] Mount-cache hash table entries: 1024 (order: 0, 4096 bytes, linear)
+[    0.278701] Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes, linear)
+[    0.920932] devtmpfs: initialized
+[    1.397082] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns
+[    1.421765] futex hash table entries: 16 (order: -5, 192 bytes, linear)
+[    3.131680] clocksource: Switched to clocksource clint_clocksource
+[    7.700046] workingset: timestamp_bits=30 max_order=14 bucket_order=0
+[   32.653676] Serial: 8250/16550 driver, 1 ports, IRQ sharing disabled
+[   32.967177] printk: console [ttyS0] disabled
+[   32.988565] 10000000.uart: ttyS0 at MMIO 0x10000000 (irq = 0, base_baud = 1048576) is a XR16850
+[   33.023141] printk: console [ttyS0] enabled
+[   33.023141] printk: console [ttyS0] enabled
+[   33.048589] printk: bootconsole [uart8250] disabled
+[   33.048589] printk: bootconsole [uart8250] disabled
+[   34.455007] Freeing unused kernel image (initmem) memory: 1464K
+[   34.467718] This architecture does not have kernel memory protection.
+[   34.484085] Run /init as init process
+
+Welcome to Buildroot
+buildroot login: root
+root
+echo CANARY_$((40+2))
+Jan  1 00:00:59 login[29]: root login on 'console'
+~ # echo CANARY_$((40+2))
+CANARY_42
+~ # cat > /tmp/ask <<'QWEOF'
+evmem, or through /dev/mem with dd.
+#   2. The console line protocol: print a line starting with "QWEN:"
+#      and the answer is typed back on the console as one line, which
+#      `read` collects. The> #!/bin/sh
+> # ask - send a prompt to the Qwen coprocessor and print its answer.
+> #
+> # Two ways in, same backend (see docs/linux.md):
+ords...>
+# Example: agent write the word banana into /tmp/hello.txt then read it back
+
+SYS='Answer with exactly one line, no explanation. To run a busybox shell command reply: TOOL run <command> - you w> #   1. The MMIO window at 0x10010000 (DATA +0, STATUS +4, CTRL +8),
+> #      poked from userspace with devmem, or through /dev/mem with dd.
+notice (e.g. an empty model reply),> #   2. The console line protocol: print a line starting with "QWEN:"
+> #      and the answer is typed back on the console as one line, which
+> #      `read` collects. The prebuilt kernel has no /dev/mem and its
+> #      8250 driver is built for a single port, so on this rootfs the
+> #      console protocol is the working channel.
+> #
+> # Usage: ask "your question"
+> 
+> if command -v devmem >/dev/null 2>&1; then
+>   QW=0x10010000
+>   for b in $(printf '%s' "$1" | od -An -tu1); do
+>     devmem $QW 8 "$b" >/dev/null
+>   done
+>   devmem $((QW + 8)) 8 1 >/dev/null
+>   while [ $(( $(devmem $((QW + 4)) 8) & 1 )) -eq 0 ]; do :; done
+>   while :; do
+>     b=$(( $(devmem $QW 8) ))
+>     [ "$b" -eq 0 ] && break
+>     printf "\\$(printf '%03o' "$b")"
+>   done
+>   echo
+> elif [ -c /dev/mem ]; then
+>   D=268439552
+>   printf '%s' "$1" | dd of=/dev/mem bs=1 seek=$D 2>/dev/null
+>   printf '\001' | dd of=/dev/mem bs=1 seek=$((D + 8)) 2>/dev/null
+>   while :; do
+>     s=$(dd if=/dev/mem bs=1 skip=$((D + 4)) count=1 2>/dev/null | od -An -tu1 
+| tr -d ' \n')
+>     [ "$s" = "1" ] && break
+>   done
+>   while :; do
+>     b=$(dd if=/dev/mem bs=1 skip=$D count=1 2>/dev/null | od -An -tu1 | tr -d 
+' \n')
+>     [ -z "$b" ] || [ "$b" = "0" ] && break
+>     printf "\\$(printf '%03o' "$b")"
+>   done
+>   echo
+> else
+>   printf 'QWEN:%s\n' "$1"
+>   IFS= read -r ans
+>   printf 'QWEN_ANSWER: %s\n' "$ans"
+> fi
+> QWEOF
+~ # cat > /tmp/agent <<'QWEOF'
+> #!/bin/sh
+> # agent - a tiny agent harness in the Hermes-gadget shape: the model is
+> # the brain, this shell is the hands. A pre-configured system prompt and
+> # one tool (run) are baked in below; the loop talks to the model over the
+> # QWEN: console protocol (see ask) - one line each way, because the
+> # device flattens every answer to a single line.
+> #
+> # Protocol:
+> #   model -> "TOOL run <busybox shell command>" : the harness runs it and
+> #            sends the output back as the next prompt's RESULT
+> #   model -> "SAY: <text>"                      : the final answer
+> #   anything else                               : treated as the answer
+> #
+> # Usage: agent <task words...>
+> # Example: agent write the word banana into /tmp/hello.txt then read it back
+> 
+> SYS='Answer with exactly one line, no explanation. To run a busybox shell comm
+and reply: TOOL run <command> - you will get its output back as a RESULT. When t
+he task is finished reply: SAY: <final answer>. Example - task "make a file /tmp
+/hi.txt containing hello": you reply TOOL run echo hello > /tmp/hi.txt and after
+ the result you reply SAY: done'
+> 
+> qwen_ask() {
+>   # the prompt must go to the CONSOLE, not stdout: this function is called
+>   # inside $(...), where stdout is the capture pipe (ask.sh never noticed -
+>   # it is never called in a substitution)
+>   printf 'QWEN:%s\n' "$1" > /dev/console
+>   IFS= read -r _ans
+>   printf '%s' "$_ans"
+> }
+> 
+> task="$*"
+> [ -z "$task" ] && { echo "usage: agent <task>"; exit 1; }
+> prompt="$SYS TASK: $task"
+> prev_cmd=""
+> prev_out=""
+> round=0
+> while [ $round -lt 7 ]; do
+>   round=$((round + 1))
+>   ans=$(qwen_ask "$prompt")
+>   echo "[agent] model: $ans"
+>   case "$ans" in
+>     *"TOOL run "*)
+>       cmd=$(printf '%s' "$ans" | sed 's/.*TOOL run //')
+>       if [ "$cmd" = "$prev_cmd" ]; then
+>         echo "[agent] repeat of the last command - not running it again"
+>         prompt="$SYS TASK: $task RESULT: you already ran that command, its res
+ult was: $prev_out Do the NEXT step, or reply SAY: <final answer>"
+>         continue
+>       fi
+>       raw=$(eval "$cmd" 2>&1); st=$?
+>       out=$(printf '%s' "$raw" | tr '\n' ' ' | head -c 300)
+>       # a silent success (a file write prints nothing) reads as "nothing
+>       # happened" to the model and it just retries - say what happened
+>       [ -z "$out" ] && out="(command ran, no output, exit $st)"
+>       prev_cmd="$cmd"
+>       prev_out="$out"
+>       echo "[agent] ran: $cmd"
+>       echo "[agent] result: $out"
+>       prompt="$SYS TASK: $task RESULT: $out Now reply with EXACTLY ONE line: T
+OOL run <command> or SAY: <final answer>"
+>       ;;
+>     *"SAY: "*)
+>       final=$(printf '%s' "$ans" | sed 's/.*SAY: //')
+>       echo "AGENT_ANSWER: $final"
+>       exit 0
+>       ;;
+>     "[qwen:"*)
+>       # a device/backend notice (e.g. an empty model reply), not an
+>       # answer - nudge once and keep looping (the round cap bounds this)
+>       echo "[agent] empty or device reply - nudging the model"
+>       prompt="$SYS TASK: $task RESULT: (your last reply was empty) Reply with 
+EXACTLY ONE line: TOOL run <command> or SAY: <final answer>"
+>       ;;
+>     *)
+>       echo "AGENT_ANSWER: $ans"
+>       exit 0
+>       ;;
+>   esac
+> done
+> echo "AGENT_ANSWER: (round limit reached) last tool result: $prev_out"
+> echo "[agent] stopped: tool round limit (7) reached"
+> QWEOF
+~ # chmod +x /tmp/ask /tmp/agent
+~ # echo STAGE_AGENT
+STAGE_AGENT
+~ # /tmp/agent write the word banana into /tmp/hello.txt then read it back and t
+ell me what it says
+QWEN:Answer with exactly one line, no explanation. To run a busybox shell command reply: TOOL run <command> - you will get its output back as a RESULT. When the task is finished reply: SAY: <final answer>. Example - task "make a file /tmp/hi.txt containing hello": you reply TOOL run echo hello > /tmp/hi.txt and after the result you reply SAY: done TASK: write the word banana into /tmp/hello.txt then read it back and tell me what it says
+TOOL run echo banana > /tmp/hello.txt
+[agent] model: TOOL run echo banana > /tmp/hello.txt
+[agent] ran: echo banana > /tmp/hello.txt
+[agent] result: (command ran, no output, exit 0)
+QWEN:Answer with exactly one line, no explanation. To run a busybox shell command reply: TOOL run <command> - you will get its output back as a RESULT. When the task is finished reply: SAY: <final answer>. Example - task "make a file /tmp/hi.txt containing hello": you reply TOOL run echo hello > /tmp/hi.txt and after the result you reply SAY: done TASK: write the word banana into /tmp/hello.txt then read it back and tell me what it says RESULT: (command ran, no output, exit 0) Now reply with EXACTLY ONE line: TOOL run <command> or SAY: <final answer>
+[qwen: empty answer]
+[agent] model: [qwen: empty answer]
+[agent] empty or device reply - nudging the model
+QWEN:Answer with exactly one line, no explanation. To run a busybox shell command reply: TOOL run <command> - you will get its output back as a RESULT. When the task is finished reply: SAY: <final answer>. Example - task "make a file /tmp/hi.txt containing hello": you reply TOOL run echo hello > /tmp/hi.txt and after the result you reply SAY: done TASK: write the word banana into /tmp/hello.txt then read it back and tell me what it says RESULT: (your last reply was empty) Reply with EXACTLY ONE line: TOOL run <command> or SAY: <final answer>
+TOOL run echo banana > /tmp/hello.txt
+[agent] model: TOOL run echo banana > /tmp/hello.txt
+[agent] repeat of the last command - not running it again
+QWEN:Answer with exactly one line, no explanation. To run a busybox shell command reply: TOOL run <command> - you will get its output back as a RESULT. When the task is finished reply: SAY: <final answer>. Example - task "make a file /tmp/hi.txt containing hello": you reply TOOL run echo hello > /tmp/hi.txt and after the result you reply SAY: done TASK: write the word banana into /tmp/hello.txt then read it back and tell me what it says RESULT: you already ran that command, its result was: (command ran, no output, exit 0) Do the NEXT step, or reply SAY: <final answer>
+TOOL run cat /tmp/hello.txt
+[agent] model: TOOL run cat /tmp/hello.txt
+[agent] ran: cat /tmp/hello.txt
+[agent] result: banana
+QWEN:Answer with exactly one line, no explanation. To run a busybox shell command reply: TOOL run <command> - you will get its output back as a RESULT. When the task is finished reply: SAY: <final answer>. Example - task "make a file /tmp/hi.txt containing hello": you reply TOOL run echo hello > /tmp/hi.txt and after the result you reply SAY: done TASK: write the word banana into /tmp/hello.txt then read it back and tell me what it says RESULT: banana Now reply with EXACTLY ONE line: TOOL run <command> or SAY: <final answer>
+TOOL run echo banana > /tmp/hello.txt
+[agent] model: TOOL run echo banana > /tmp/hello.txt
+[agent] ran: echo banana > /tmp/hello.txt
+[agent] result: (command ran, no output, exit 0)
+QWEN:Answer with exactly one line, no explanation. To run a busybox shell command reply: TOOL run <command> - you will get its output back as a RESULT. When the task is finished reply: SAY: <final answer>. Example - task "make a file /tmp/hi.txt containing hello": you reply TOOL run echo hello > /tmp/hi.txt and after the result you reply SAY: done TASK: write the word banana into /tmp/hello.txt then read it back and tell me what it says RESULT: (command ran, no output, exit 0) Now reply with EXACTLY ONE line: TOOL run <command> or SAY: <final answer>
+[qwen: empty answer]
+[agent] model: [qwen: empty answer]
+[agent] empty or device reply - nudging the model
+QWEN:Answer with exactly one line, no explanation. To run a busybox shell command reply: TOOL run <command> - you will get its output back as a RESULT. When the task is finished reply: SAY: <final answer>. Example - task "make a file /tmp/hi.txt containing hello": you reply TOOL run echo hello > /tmp/hi.txt and after the result you reply SAY: done TASK: write the word banana into /tmp/hello.txt then read it back and tell me what it says RESULT: (your last reply was empty) Reply with EXACTLY ONE line: TOOL run <command> or SAY: <final answer>
+TOOL run echo banana > /tmp/hello.txt
+[agent] model: TOOL run echo banana > /tmp/hello.txt
+[agent] repeat of the last command - not running it again
+AGENT_ANSWER: (round limit reached) last tool result: (command ran, no output, exit 0)
+[agent] stopped: tool round limit (7) reached
+cat /tmp/hello.txt | od -c | head -1; echo CAT"DONE"
+~ # cat /tmp/hello.txt | od -c | head -1; echo CAT"DONE"
+0000000    b   a   n   a   n   a  \n                                    
+CATDONE
+~ # 

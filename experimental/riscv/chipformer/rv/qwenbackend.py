@@ -54,8 +54,8 @@ def lmstudio_backend(base_url: str | None = None, proxy: str | None = None):
         out = call("/v1/chat/completions", {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7,
-            "max_tokens": 220,
+            "temperature": float(os.environ.get("QWEN_TEMP", "0.7")),
+            "max_tokens": int(os.environ.get("QWEN_MAX_TOKENS", "220")),
         }, timeout=600)
         return out["choices"][0]["message"]["content"].strip() or "[qwen: empty answer]"
 

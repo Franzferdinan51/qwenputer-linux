@@ -103,6 +103,31 @@ IIR to decide whether to drain the receiver — so getty never consumed
 a single byte. IIR now reports RDA while input is queued
 (`tests/test_rv_linux.py` has the regression test).
 
+**The agent harness — `agent` (2026-10-31).** On top of `ask` sits a
+tiny agent loop in the shape of a gadget client: the model is the
+brain, a pre-configured shell script is the hands. `env/linux/agent.sh`
+bakes in a system prompt and one tool (`run`), then loops over the
+QWEN: channel — one line each way, because the device flattens every
+answer: the model replies `TOOL run <busybox command>` (the harness
+runs it and sends the output back as the next prompt's RESULT) or
+`SAY: <answer>`. Repeated commands are not re-run, and empty model
+replies get a nudge instead of ending the loop; seven rounds max,
+and if the cap is hit the harness reports the last tool result as
+the answer, labeled as such. The
+full Hermes Agent cannot live in here — it is a big Python framework
+with a gateway and plugins — but the gadget pattern ports, and its
+endgame backend is the same seat: the checkpoint's own language
+layers. **Proof — verified 2026-10-31** (`chipformer/rv/agenttest.py`,
+LM Studio backend): given "write the word banana into /tmp/hello.txt
+then read it back and tell me what it says", the model's tool calls
+wrote the file; the test then verified the contents from `od`, not
+the model's word — PASS (`boot-logs/agent-lm.out`). The loop also
+surfaced a second UART bug, the transmit twin of the IIR fix above:
+IIR never reported THRE, which is the only kick that restarts a
+blocked transmitter on this irq=0 port, so any guest write past the
+inline chunk (~130 bytes — the agent's own prompt) slept forever.
+IIR now reports THRE when no input is queued; same regression test.
+
 ## What is in this fork, in build order
 
 1. **`chipformer/rv/linux.py` — the Linux-capable reference machine.**

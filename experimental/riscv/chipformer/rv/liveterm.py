@@ -29,6 +29,7 @@ from chipformer.rv.qwenbackend import make_backend
 
 HERE = Path(__file__).parent
 ASK_SH = (HERE / "env" / "linux" / "ask.sh").read_text()
+AGENT_SH = (HERE / "env" / "linux" / "agent.sh").read_text()
 
 PAGE = """<!doctype html>
 <meta charset="utf-8">
@@ -124,8 +125,9 @@ class MachineThread(threading.Thread):
     def run(self) -> None:
         install = (
             "cat > /tmp/ask <<'QWEOF'\n" + ASK_SH + "QWEOF\n"
-            "chmod +x /tmp/ask\n"
-            "echo ASK_READY type: ask \\\"your question\\\"\n"
+            "cat > /tmp/agent <<'QWEOF'\n" + AGENT_SH + "QWEOF\n"
+            "chmod +x /tmp/ask /tmp/agent\n"
+            "echo ASK_READY ask-a-question or: agent <task for the model>\n"
         ).encode()
         pending = bytearray()
         while not self.m.halted:
