@@ -223,6 +223,38 @@ This fork now has the Doom port's medicine, transplanted:
   (`--snapshot shell.snap` in the tests; `liveterm --snapshot`).
   The snapshot agent test passes against the live model.
 
+### The agent framework — the debloated Hermes shape
+
+`agent.sh` grew into a small agent framework in the Hermes style
+(`docs/agent-framework.md` has the full design and the debloat
+map; `docs/upstream-catalog.md` catalogues what upstream has
+that we don't). The harness intercepts verbs beside `run`:
+`remember` / `recall` (curated `/root/BRAIN.md` + grep over
+history), `schedule` / `jobs` / `unschedule` (the agent's own
+cron), `saveskill` / `skill` / `fixskill` (procedural memory in
+`/root/skills`), `saveapp` / `app` / `apps` (gap prosthetics —
+small programs the agent builds for itself, for itself only),
+plus a destructive-command denylist, a SOUL/BRAIN wake-up fold,
+`/root/history`, a reflection turn after substantial work, and a
+loop guard (a third identical command in one session is refused
+— it kills the write/read/write thrash this brain falls into).
+
+Scheduling runs through **`agentshell.sh`, a foreground
+supervisor that owns the console** — not a background daemon.
+Measured reason: a background process cannot read this guest's
+console (its reads return empty lines instantly), so a
+background ticker's jobs starved while the model's answers sat
+unread in the console queue. The supervisor is part shell, part
+scheduler: typed lines are commands or `hermes-agent` tasks, an
+idle 60 s is the tick (heartbeat `CHECK:` lines first, then due
+jobs), and exactly one reader ever waits on the console. Guest
+platform facts learned the hard way: a single input line
+truncates at ~1,021 chars (install files keep lines well under
+it), and this busybox has **no `awk`** — guest scripts are
+pure-shell. Drivers: `schedtest.py` (schedule → fires hands-off
+→ continuity log → self-cleanup: **PASS**), `agenttest.py`
+(**PASS**), `verbtest.py` (per-verb ground-truth coverage).
+
 ### The dashboard
 
 `chipformer/rv/dashboard.py` is a stdlib-only host server (default
@@ -236,6 +268,18 @@ verdicts. The Terminal tab embeds the live terminal untouched; the
 Desktop tab marks the framebuffer spike the Doom live view
 prototyped (guest draws in its memory, host shows it, input goes
 back).
+
+**Chat can use the computer.** The chat system prompt teaches the
+seat a delegation line: when a request needs *doing*, the model
+replies `TASK: <the job in plain words>` instead of claiming it
+did something. The dashboard types that job into the live
+terminal guest (`hermes-agent "<job>"` at the agentshell — the
+session is visible in the Terminal tab, working alongside
+whoever is there), waits for the session's `AGENT_ANSWER:`, and
+hands it back to the model as the computer's report; the model
+then answers the user from the report. Up to 3 delegations per
+message; if the terminal is offline the model is told so and
+answers honestly. Plain conversation never touches the guest.
 
 ### Running it on the circuit itself
 

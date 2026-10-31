@@ -23,6 +23,7 @@ Run:  python3 dashboard.py [--port 8952]
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import time
@@ -144,6 +145,109 @@ def get_status():
     }
 
 
+# --- live activity telemetry (drives the dashboard's activity view) ---
+# Every token event the chat proxy forwards is timestamped here; the
+# circuit numbers are parsed from the runs' own logs. Nothing on this
+# page is decorative: if a counter did not move, the view stays calm.
+_ACT = []          # [ts, count] token events from chat streaming
+_CHAT_OPEN = [0]   # chat streams currently being proxied
+
+
+def _act_note(n=1):
+    _ACT.append([time.time(), n])
+    del _ACT[:-4000]
+
+
+def _circuit_tokens(path):
+    txt = tail(path, 200000)
+    toks = [int(x) for x in re.findall(r"at token (\d+)", txt)]
+    total = re.findall(r"tokens=(\d+)", txt)
+    return {
+        "tokens": max(toks) if toks else (int(total[-1]) if total else 0),
+        "prompts": txt.count("[circuitagent: prompt"),
+        "answers": txt.count("[circuitagent: answer"),
+    }
+
+
+TASK_HINT = (
+    "You also have a computer: Qwenputer-Linux, a small real Linux "
+    "living in your weights. When a request needs DOING - files, "
+    "exact math, remembering or recalling things, scheduling, "
+    "checking the system - do not claim you did it and do not "
+    "guess the result: reply with exactly one line: TASK: <the "
+    "job in plain words> and nothing after it. The computer runs "
+    "it and its report arrives as the next message; then answer "
+    "the user from that report. For plain conversation, just talk."
+)
+
+
+def _guest_task(task, send):
+    """Run one hermes-agent session in the live terminal guest and
+    return its AGENT_ANSWER text; None when the terminal is offline.
+
+    The task is typed at the guest's own console (the agentshell
+    runs it in the foreground, exactly as if the user typed it -
+    the session is visible in the Terminal tab). One known blur:
+    if the user is mid-session at that same console, answers queue
+    behind theirs and the last AGENT_ANSWER in the window wins."""
+    base = "http://127.0.0.1:8951"
+    try:
+        with urllib.request.urlopen(base + "/api/out?since=0",
+                                    timeout=10) as r:
+            mark = json.loads(r.read())["until"]
+    except Exception:
+        return None
+    line = 'hermes-agent "' + task.replace('"', "'") + '"\n'
+    try:
+        req = urllib.request.Request(
+            base + "/api/in", data=json.dumps({"data": line}).encode(),
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10).read()
+    except Exception:
+        return None
+    deadline = time.time() + 300
+    waited = 0
+    while time.time() < deadline:
+        time.sleep(3)
+        waited += 3
+        if waited % 15 == 0:
+            send({"status": "the computer is working… %ds" % waited})
+        try:
+            with urllib.request.urlopen(
+                    base + "/api/out?since=%d" % mark, timeout=10) as r:
+                data = json.loads(r.read())["data"]
+        except Exception:
+            continue
+        idx = data.rfind("\nAGENT_ANSWER:")
+        if idx >= 0:
+            ans = data[idx + len("\nAGENT_ANSWER:"):].split("\n")[0].strip()
+            if ans:
+                return ans
+    return "(the computer did not answer within 5 minutes)"
+
+
+def get_activity():
+    now = time.time()
+    series = [0] * 30
+    for ts, n in _ACT:
+        age = now - ts
+        if age < 60:
+            series[min(29, int(age // 2))] += n
+    series.reverse()
+    grown = _circuit_tokens(os.path.expanduser(
+        "~/qwenputer-circuit-test/circuit-builtin.log"))
+    grown["running"] = proc_running("circuitagent agent-big")
+    stock = _circuit_tokens(os.path.expanduser(
+        "~/qwenputer-test/circuit-stock-builtin.log"))
+    return {
+        "chat_series": series,
+        "chat_open": _CHAT_OPEN[0],
+        "grown": grown,
+        "stock": stock,
+        "terminal_up": tcp_up(8951),
+    }
+
+
 PAGE = r"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -195,6 +299,13 @@ padding:0 20px;font:inherit;font-weight:600;cursor:pointer}
 button.act:disabled{opacity:.45}
 iframe{width:100%;height:72vh;border:1px solid var(--line);border-radius:10px;
 background:#000}
+#viz{width:100%;height:250px;display:block;background:#0a0d12;
+border:1px solid var(--line);border-radius:10px}
+.chip{background:var(--card);border:1px solid var(--line);color:var(--tx);
+border-radius:20px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
+.chip:hover{border-color:var(--acc)}
+button.ghost{background:none;border:1px solid var(--line);color:var(--dim);
+border-radius:10px;padding:8px 16px;font:inherit;cursor:pointer}
 label{display:block;margin:12px 0 4px;color:var(--dim);font-size:13px}
 input[type=text],input[type=number],textarea{width:100%;background:var(--card);
 border:1px solid var(--line);color:var(--tx);border-radius:8px;padding:9px;
@@ -218,7 +329,16 @@ code{background:#0a0d12;padding:1px 6px;border-radius:5px}
 <button data-t="settings">Settings</button>
 </nav>
 <main>
-<section id="overview" class="tab on"><div class="cards">
+<section id="overview" class="tab on">
+<div class="card" style="margin-bottom:12px"><h3>ACTIVITY &mdash; LIVE</h3>
+<canvas id="viz" width="900" height="250"></canvas>
+<p class="dim" id="vizlegend">warming up&hellip;</p>
+<p class="dim">left: the brain thinking (amber). right: the computer
+in the weights (blue). pulses are real work &mdash; chat tokens
+flowing, and prompts crossing the mailbox between brain and
+computer. nothing here is decoration: when nothing moves, nothing
+happened.</p></div>
+<div class="cards">
 <div class="card"><h3>THE BRAIN</h3>
 <p id="ov-model">&hellip;</p>
 <p class="dim">the built-in Qwen 3.5 4B weights, served as the seat.
@@ -241,11 +361,19 @@ it can use the whole Linux side: files, the notebook at
 <code>ask "a question"</code> talks to the weights.</p></div>
 </div></section>
 <section id="chat" class="tab">
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+<button class="chip" data-q="Explain what you are, in one short paragraph.">what are you?</button>
+<button class="chip" data-q="What is the computer inside you, and what has it computed so far?">the computer inside you</button>
+<button class="chip" data-q="What is the capital of France?">a plain question</button>
+</div>
 <div id="msgs"></div>
 <div id="chatbar">
 <textarea id="inp" rows="2" placeholder="talk to the built-in weights&hellip;"></textarea>
 <button class="act" id="send">Send</button>
+<button class="ghost" id="stop" style="display:none">Stop</button>
+<button class="ghost" id="clear">Clear</button>
 </div>
+<p class="dim" id="chatstat" style="font-size:12px;min-height:16px"></p>
 <p class="dim" style="color:var(--dim);font-size:12px">Enter sends,
 Shift+Enter makes a new line. This chat is with the same 4B brain the
 in-weights computer consults.</p>
@@ -315,6 +443,7 @@ async function status(){
   gr.textContent=j.grown.pass?'PASS':(j.grown.running?'running':'not running');
   gr.className='badge '+(j.grown.pass?'ok':'');
   $('ov-grownlog').textContent=(j.grown.log_tail||'')+(j.grown.out_tail||'');
+  $('ov-grownlog').scrollTop=1e9;
   $('ov-term').innerHTML=j.terminal_up?
    '<span class="badge ok">up</span> &mdash; open the Terminal tab':
    '<span class="badge bad">down</span>';
@@ -329,16 +458,21 @@ function bubble(role,text){
  d.appendChild(body);$('msgs').appendChild(d);$('msgs').scrollTop=1e9;
  return body;
 }
+let AC=null,ntok=0,t0=0;
 async function send(){
- const text=$('inp').value.trim();if(!text)return;
- $('inp').value='';$('send').disabled=true;
+ const text=$('inp').value.trim();if(!text||AC)return;
+ $('inp').value='';$('send').disabled=true;$('stop').style.display='';
+ AC=new AbortController();ntok=0;t0=Date.now();
  bubble('user',text);hist.push({role:'user',content:text});
  const body=bubble('assistant','');
  let think=document.createElement('div');think.className='think';
  think.style.display='none';body.parentNode.insertBefore(think,body);
  let content='',reasoning='';
+ const stat=()=>{$('chatstat').textContent='working\u2026 '+
+  Math.round((Date.now()-t0)/1000)+'s \u00b7 '+ntok+' tokens so far';};
+ stat();const iv=setInterval(stat,500);
  try{
-  const r=await fetch('/api/chat',{method:'POST',
+  const r=await fetch('/api/chat',{method:'POST',signal:AC.signal,
    headers:{'Content-Type':'application/json'},
    body:JSON.stringify({messages:hist})});
   const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
@@ -348,20 +482,86 @@ async function send(){
     const ev=buf.slice(0,i);buf=buf.slice(i+2);
     if(!ev.startsWith('data:'))continue;
     const j=JSON.parse(ev.slice(5));
-    if(j.delta){content+=j.delta;body.textContent=content;}
+    if(j.delta){content+=j.delta;body.textContent=content;ntok++;
+     if(window.vizPulse)vizPulse(1);}
     if(j.reasoning){reasoning+=j.reasoning;think.style.display='block';
-     think.textContent=reasoning;}
+     think.textContent=reasoning;ntok++;}
     if(j.error){body.textContent='[error] '+j.error;}
+    if(j.retract){content='';body.textContent='';}
+    if(j.status){$('chatstat').textContent=j.status;
+     if(window.vizPulse)vizPulse(6,true);}
     $('msgs').scrollTop=1e9;
    }}
- }catch(e){body.textContent='[connection error] '+e;}
+ }catch(e){if(e.name!=='AbortError')body.textContent='[connection error] '+e;
+  else if(!content)body.textContent='(stopped)';}
+ clearInterval(iv);
  if(!content&&reasoning){body.textContent=reasoning;}
  if(content)hist.push({role:'assistant',content});
- $('send').disabled=false;$('inp').focus();
+ $('chatstat').textContent='done \u00b7 '+
+  Math.round((Date.now()-t0)/1000)+'s \u00b7 '+ntok+' tokens';
+ AC=null;$('send').disabled=false;$('stop').style.display='none';
+ $('inp').focus();
 }
 $('send').onclick=send;
+$('stop').onclick=()=>{if(AC)AC.abort();};
+$('clear').onclick=()=>{hist.length=0;$('msgs').innerHTML='';
+ $('chatstat').textContent='';};
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+ $('inp').value=c.dataset.q;send();});
 $('inp').addEventListener('keydown',e=>{
  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+const viz={pulses:[],lastPrompts:-1};
+const vctx=$('viz').getContext('2d');
+const brainPts=[],chipPts=[];
+for(let i=0;i<110;i++){const y=1-(i/109)*2,r=Math.sqrt(1-y*y),t=i*2.39996;
+ brainPts.push([Math.cos(t)*r,y,Math.sin(t)*r]);}
+for(let x=0;x<8;x++)for(let y=0;y<6;y++)for(let z=0;z<4;z++)
+ chipPts.push([x-3.5,y-2.5,z-1.5]);
+let rot=0;
+function proj(p,cx,cy,s){const c=Math.cos(rot),sn=Math.sin(rot);
+ const x=p[0]*c-p[2]*sn,z=p[0]*sn+p[2]*c,y=p[1];
+ const d=340/(340+z*40);return[cx+x*s*d,cy+y*s*d,d];}
+function vizPulse(n,big){for(let i=0;i<n;i++){if(viz.pulses.length>240)return;
+ viz.pulses.push({t:0,sp:.008+Math.random()*.012,
+  a:brainPts[Math.random()*brainPts.length|0],
+  b:chipPts[Math.random()*chipPts.length|0],big:!!big});}}
+window.vizPulse=vizPulse;
+function drawViz(){rot+=.0035;vctx.clearRect(0,0,900,250);
+ const draw=(pts,cx,cy,s,col)=>{const out=[];
+  for(const p of pts){const q=proj(p,cx,cy,s);out.push(q);
+   vctx.globalAlpha=.25+.55*q[2]/1.6;vctx.fillStyle=col;
+   vctx.beginPath();vctx.arc(q[0],q[1],1.6*q[2],0,7);vctx.fill();}
+  vctx.globalAlpha=1;return out;};
+ draw(brainPts,225,118,64,'#e8b93e');
+ draw(chipPts,665,118,15,'#57c7ff');
+ vctx.fillStyle='#9aa7b5';vctx.font='12px sans-serif';
+ vctx.fillText('BRAIN \u2014 qwen 3.5 4b, the seat',140,240);
+ vctx.fillText('COMPUTER \u2014 the compiled chip',540,240);
+ viz.pulses=viz.pulses.filter(p=>p.t<=1);
+ for(const p of viz.pulses){p.t+=p.sp;
+  const a=proj(p.a,225,118,64),b=proj(p.b,665,118,15);
+  const x=a[0]+(b[0]-a[0])*p.t,
+        y=a[1]+(b[1]-a[1])*p.t-Math.sin(p.t*3.14)*36;
+  vctx.globalAlpha=.9;vctx.fillStyle=p.big?'#ffffff':'#ffd479';
+  vctx.beginPath();vctx.arc(x,y,p.big?3:2,0,7);vctx.fill();
+  vctx.globalAlpha=1;}
+ requestAnimationFrame(drawViz);}
+drawViz();
+async function activity(){
+ try{const r=await fetch('/api/activity');const j=await r.json();
+  const s=j.chat_series,rate=s.slice(20).reduce((a,b)=>a+b,0)/20;
+  if(j.chat_open>0&&rate>0)vizPulse(Math.min(3,Math.ceil(rate/6)));
+  if(j.grown.running&&j.grown.tokens>0)vizPulse(1);
+  if(viz.lastPrompts>=0&&j.grown.prompts>viz.lastPrompts)vizPulse(6,true);
+  viz.lastPrompts=j.grown.prompts;
+  $('vizlegend').textContent='chat '+(j.chat_open?'streaming':'idle')+
+   ' \u00b7 circuit '+(j.grown.running?
+    ('at token '+j.grown.tokens.toLocaleString()+' \u00b7 '+
+     j.grown.prompts+' prompts crossed the mailbox'):'not running')+
+   ' \u00b7 guest '+(j.terminal_up?'up':'down');
+ }catch(e){}
+ setTimeout(activity,1000);}
+activity();
 async function loadSettings(){
  const r=await fetch('/api/settings');const j=await r.json();
  $('s-backend').value=j.backend_url;$('s-model').value=j.model;
@@ -404,6 +604,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         elif self.path == "/api/status":
             self._json(get_status())
+        elif self.path == "/api/activity":
+            self._json(get_activity())
         elif self.path == "/api/settings":
             self._json(load_settings())
         else:
@@ -437,16 +639,76 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         def send(obj):
+            if "delta" in obj or "reasoning" in obj:
+                _act_note(1)
             self.wfile.write(("data: " + json.dumps(obj) + "\n\n").encode())
             self.wfile.flush()
 
         if err or not model:
             send({"error": "brain unreachable: %s" % (err or "no model")})
             return
-        out = []
-        if s.get("system_prompt"):
-            out.append({"role": "system", "content": s["system_prompt"]})
-        out.extend(msgs)
+        _CHAT_OPEN[0] += 1
+        try:
+            out = []
+            sysp = (s.get("system_prompt") or "").strip()
+            out.append({"role": "system",
+                        "content": (sysp + "\n" + TASK_HINT).strip()})
+            out.extend(msgs)
+            # chat-time computer use (Duckets, 2026-10-31): the model
+            # may answer a message with a TASK: line instead of text.
+            # That line is typed into the live terminal guest - the
+            # same console the user sees - where the agentshell runs
+            # it as a hermes-agent session; the session's AGENT_ANSWER
+            # comes back here as the computer's report and the model
+            # then answers the user from it. Max 3 delegations.
+            seen_tasks = set()
+            for _round in range(4):
+                content = self._stream_round(out, s, model, send)
+                task = None
+                for ln in content.splitlines():
+                    if ln.strip().startswith("TASK:"):
+                        task = ln.strip()[5:].strip()
+                        break
+                if not task:
+                    break
+                if _round == 3 or task.lower() in seen_tasks:
+                    # out of delegations, or the same job handed over
+                    # twice (seen live 2026-10-31: the model led its
+                    # final answer with the raw TASK: line): never show
+                    # the user the delegation line - retract what
+                    # streamed and re-emit it with TASK: lines cut.
+                    send({"retract": True})
+                    cleaned = "\n".join(
+                        ln for ln in content.splitlines()
+                        if not ln.strip().startswith("TASK:")).strip()
+                    send({"delta": cleaned or
+                          "(no answer - the model repeated its request "
+                          "to the computer instead of replying)"})
+                    break
+                seen_tasks.add(task.lower())
+                send({"retract": True})
+                send({"status": "asking the computer: " + task[:90]})
+                report = _guest_task(task, send)
+                if report is None:
+                    report = ("(the computer is offline - the live "
+                              "terminal is not running)")
+                out.append({"role": "assistant", "content": content})
+                out.append({"role": "user",
+                            "content": "The computer reports: " + report +
+                                       " Answer the user from this "
+                                       "report now."})
+            send({"done": True})
+        except Exception as e:
+            try:
+                send({"error": str(e)[:200]})
+            except Exception:
+                pass
+        finally:
+            _CHAT_OPEN[0] -= 1
+
+    def _stream_round(self, out, s, model, send):
+        """One streamed completion over the message list; returns the
+        full content text (deltas also go to the page as they come)."""
         payload = {"model": model, "messages": out,
                    "temperature": float(s["temperature"]),
                    "max_tokens": int(s["max_tokens"]), "stream": True}
@@ -454,31 +716,27 @@ class Handler(BaseHTTPRequestHandler):
             s["backend_url"].rstrip("/") + "/v1/chat/completions",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=1200) as r:
-                for raw in r:
-                    line = raw.decode("utf-8", "replace").strip()
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                    except Exception:
-                        continue
-                    ch = (chunk.get("choices") or [{}])[0]
-                    delta = ch.get("delta") or {}
-                    if delta.get("content"):
-                        send({"delta": delta["content"]})
-                    elif delta.get("reasoning_content"):
-                        send({"reasoning": delta["reasoning_content"]})
-            send({"done": True})
-        except Exception as e:
-            try:
-                send({"error": str(e)[:200]})
-            except Exception:
-                pass
+        content = ""
+        with urllib.request.urlopen(req, timeout=1200) as r:
+            for raw in r:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except Exception:
+                    continue
+                ch = (chunk.get("choices") or [{}])[0]
+                delta = ch.get("delta") or {}
+                if delta.get("content"):
+                    content += delta["content"]
+                    send({"delta": delta["content"]})
+                elif delta.get("reasoning_content"):
+                    send({"reasoning": delta["reasoning_content"]})
+        return content
 
 
 def main():

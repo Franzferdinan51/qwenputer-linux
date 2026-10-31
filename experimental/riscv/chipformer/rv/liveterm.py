@@ -30,6 +30,7 @@ from chipformer.rv.qwenbackend import agent_bridge_backend, make_backend
 HERE = Path(__file__).parent
 ASK_SH = (HERE / "env" / "linux" / "ask.sh").read_text()
 AGENT_SH = (HERE / "env" / "linux" / "agent.sh").read_text()
+ASHELL_SH = (HERE / "env" / "linux" / "agentshell.sh").read_text()
 
 PAGE = """<!doctype html>
 <meta charset="utf-8">
@@ -49,7 +50,7 @@ PAGE = """<!doctype html>
            padding:8px 14px; font:inherit; cursor:pointer; }
   p.hint { color:#7f8c98; font-size:12px; }
 </style>
-<h1>Qwen-Linux <span>Linux 6.1.14 on the Qwenputer reference CPU - login: root (no password), then try: ask "what is the capital of France" or hermes-agent &lt;a task&gt;</span></h1>
+<h1>Qwen-Linux <span>Linux 6.1.14 on the Qwenputer reference CPU - login: root (no password), then try: ask "what is the capital of France" or hermes-agent "your task in quotes"</span></h1>
 <div id="term" tabindex="0"></div>
 <div id="row">
   <input id="box" placeholder="or type here and Send (Enter sends too) - good for phones">
@@ -133,10 +134,17 @@ class MachineThread(threading.Thread):
             "cat > /tmp/ask <<'QWEOF'\n" + ASK_SH + "QWEOF\n"
             "cat > /tmp/agent <<'QWEOF'\n" + AGENT_SH + "QWEOF\n"
             "cp /tmp/agent /tmp/hermes-agent\n"
-            "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
-            "echo ASK_READY try ask \"a question\" or: hermes-agent <task for the model>\n"
+            "cat > /tmp/agentshell <<'QWEOF'\n" + ASHELL_SH + "QWEOF\n"
+            "cp /tmp/agentshell /root/agentshell\n"
+            "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent /tmp/agentshell\n"
+            "mkdir -p /root/nb /root/skills /root/apps\n"
+            "[ -f /root/SOUL.md ] || printf 'You are the agent inside Qwenputer-Linux: a small computer living in the weights of Qwen 3.5 4B. You work through tools, remember what matters, schedule what matters later, and build yourself small apps for the things you are bad at.\\n' > /root/SOUL.md\n"
+            "echo ASK_READY the agentshell takes the console now: shell commands and hermes-agent tasks run there, scheduled jobs fire on their own, exit returns here\n"
+            "/tmp/agentshell\n"
         ).encode()
         pending = bytearray()
+        fed_mark = 0
+        fed_stall = 0
         while not self.m.halted:
             with self.lock:
                 self.m.run(20_000)
@@ -158,8 +166,19 @@ class MachineThread(threading.Thread):
                     self.phase_steps = steps
                     self.feed(b"echo CANARY_$((40+2))\n")
             elif self.phase == 2 and pending:
-                self.feed(bytes(pending[:256]))
-                del pending[:256]
+                # drip-feed on echo growth: blind 256B chunks overflow
+                # the guest UART queue on big installs and silently
+                # tear lines out of the heredoc (seen 2026-10-31 with
+                # the 21 KB framework install). Feed more only when
+                # the guest has echoed (consumed) what it has - or
+                # after a long stall, in case echo paused.
+                if len(out) > fed_mark or fed_stall >= 300:
+                    self.feed(bytes(pending[:256]))
+                    del pending[:256]
+                    fed_mark = len(out)
+                    fed_stall = 0
+                else:
+                    fed_stall += 1
             time.sleep(0.01)
 
 
