@@ -43,9 +43,10 @@ def main() -> int:
     script = (
         "cat > /tmp/ask <<'QWEOF'\n" + ASK + "QWEOF\n"
         "cat > /tmp/agent <<'QWEOF'\n" + AGENT + "QWEOF\n"
-        "chmod +x /tmp/ask /tmp/agent\n"
+        "cp /tmp/agent /tmp/hermes-agent\n"
+        "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
         "echo STAGE_AGENT\n"
-        f"/tmp/agent {TASK}\n"
+        f"/tmp/hermes-agent {TASK}\n"
     ).encode()
     chunks = [script[i:i + 256] for i in range(0, len(script), 256)]
     logf = open(args.log, "wb") if args.log else None

@@ -63,6 +63,46 @@ def lmstudio_backend(base_url: str | None = None, proxy: str | None = None):
     return ask
 
 
+# A prompt from inside the guest harness always carries this phrase
+# (agent.sh's baked-in system prompt) - the bridge uses it to tell a
+# harness prompt from a terminal user's question.
+AGENT_MARK = "TOOL run <command> - you will get"
+
+_BRIDGE_HINT = (
+    " [This question arrives from a terminal on a small linux machine "
+    "that has its own agent, hermes-agent, which can run shell commands "
+    "and use files inside that machine. If answering well needs that "
+    "work done, reply with exactly one line: AGENT: <the task for "
+    "hermes-agent>. You will then receive its report and can answer.]")
+
+
+def agent_bridge_backend(base):
+    """Wrap a backend so the model in the seat can *use* the guest's
+    hermes-agent: an ordinary question is offered the choice, and if the
+    model replies ``AGENT: <task>`` the wrapper returns the
+    ``[[RUN-AGENT: <task>]]`` marker instead. The guest-side ask program
+    sees the marker, runs hermes-agent right there in the same Linux
+    partition (same files), and asks again with a ``HERMES REPORT:``
+    folded in, which this wrapper passes straight to the base model.
+    Prompts from inside the harness itself always go straight to the
+    base model - delegation is one level deep, never recursive.
+    """
+    def ask(prompt: str) -> str:
+        if AGENT_MARK in prompt or "HERMES REPORT:" in prompt:
+            return base(prompt)
+        ans = str(base(prompt + _BRIDGE_HINT))
+        flat = " ".join(ans.split())
+        i = flat.find("AGENT:")
+        if i >= 0:
+            task = flat[i + 6:].strip()[:200]
+            if task:
+                return f"[[RUN-AGENT: {task}]]"
+        return ans
+
+    ask.model = getattr(base, "model", "agent-bridge")
+    return ask
+
+
 def make_backend(name: str, lm_url: str | None = None):
     if name == "echo":
         return echo_backend

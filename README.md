@@ -47,11 +47,24 @@ completely. The guest can also **ask the model a question and print its answer**
 verified end-to-end by `qwentest.py` against both a deterministic echo backend and a
 real LM Studio model (transcripts in `boot-logs/`). On top of `ask` there is now an
 **agent harness** in the gadget-client shape — the model is the brain, a baked-in
-shell script is the hands: `/tmp/agent write the word banana into /tmp/hello.txt then
-read it back` has the model's tool calls do the work while the harness runs the
-commands, dedupes repeats, and nudges empty replies (`agenttest.py`, transcript in
-`boot-logs/agent-lm.out`; the brain's multi-step follow-through is the limiting
-factor, exactly as expected at this size). Getting the agent's long prompt out of
+shell script is the hands: `hermes-agent write the word banana into /tmp/hello.txt
+then read it back` (also installed as `/tmp/agent`) has the model's tool calls do
+the work while the harness runs the commands, dedupes repeats, and nudges empty
+replies (`agenttest.py`, transcript in `boot-logs/agent-lm.out`; the brain's
+multi-step follow-through is the limiting factor, exactly as expected at this
+size). The harness's one tool is a whole Linux system, not a calculator — its
+prompt teaches the model to keep a persistent notebook in `/root/nb` and use
+files, text tools and exact shell arithmetic. And the model can start the
+harness itself: with the **delegation bridge** (`liveterm --bridge`) a question
+asked through `ask` can be answered `AGENT: <task>`, whereupon `ask` runs
+`hermes-agent` in the same partition and folds its report into the model's final
+answer — plumbing proven end-to-end by `bridgetest.py` (scripted seat, file
+contents verified from `od`; transcript in `boot-logs/bridge-scripted.out`).
+The same gadget pattern also exists **bare-metal**: `env/progs/agent.c` is a
+single ELF for the stock circuit map — baked-in prompt, exact `store`/`recall`/
+`mul` tools, the model reached through a mailbox in RAM (`bareagent.py`) — whose
+`mul` tool returned 123456789 × 987654321 = 121932631112635269 exactly, a product
+no language model does reliably in its head. Getting the agent's long prompt out of
 the guest took a second UART fix — IIR now reports THRE as well as RDA. New tests:
 15 passed. Not yet done:
 the final phase — porting these enhancements into the compiled in-weights circuit

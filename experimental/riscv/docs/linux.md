@@ -103,17 +103,24 @@ IIR to decide whether to drain the receiver — so getty never consumed
 a single byte. IIR now reports RDA while input is queued
 (`tests/test_rv_linux.py` has the regression test).
 
-**The agent harness — `agent` (2026-10-31).** On top of `ask` sits a
-tiny agent loop in the shape of a gadget client: the model is the
-brain, a pre-configured shell script is the hands. `env/linux/agent.sh`
-bakes in a system prompt and one tool (`run`), then loops over the
-QWEN: channel — one line each way, because the device flattens every
-answer: the model replies `TOOL run <busybox command>` (the harness
-runs it and sends the output back as the next prompt's RESULT) or
-`SAY: <answer>`. Repeated commands are not re-run, and empty model
-replies get a nudge instead of ending the loop; seven rounds max,
-and if the cap is hit the harness reports the last tool result as
-the answer, labeled as such. The
+**The agent harness — `hermes-agent` (2026-10-31).** On top of `ask`
+sits a tiny agent loop in the shape of a gadget client: the model is
+the brain, a pre-configured shell script is the hands.
+`env/linux/agent.sh` is installed in the guest as both
+`/tmp/hermes-agent` and `/tmp/agent`; it bakes in a system prompt and
+one tool (`run`), then loops over the QWEN: channel — one line each
+way, because the device flattens every answer: the model replies
+`TOOL run <busybox command>` (the harness runs it and sends the
+output back as the next prompt's RESULT) or `SAY: <answer>`. The
+tool is a whole Linux system, not a calculator: the prompt teaches
+the model that files persist for the session and to keep a notebook
+in `/root/nb` — facts and intermediate results written down and read
+back in later steps or later tasks — alongside worked examples
+(files, exact shell arithmetic, listing a directory). Repeated
+commands are not re-run, and empty model replies get a nudge
+instead of ending the loop; nine rounds max, and if the cap is hit
+the harness reports the last tool result as the answer, labeled as
+such. The
 full Hermes Agent cannot live in here — it is a big Python framework
 with a gateway and plugins — but the gadget pattern ports, and its
 endgame backend is the same seat: the checkpoint's own language
@@ -127,6 +134,45 @@ IIR never reported THRE, which is the only kick that restarts a
 blocked transmitter on this irq=0 port, so any guest write past the
 inline chunk (~130 bytes — the agent's own prompt) slept forever.
 IIR now reports THRE when no input is queued; same regression test.
+
+**The bridge — the model can use `hermes-agent` (2026-10-31).** The
+harness above is something a *user* starts. The bridge lets the
+*model in the seat* start it: `qwenbackend.agent_bridge_backend`
+wraps any backend and offers every plain question a choice — answer
+it, or reply `AGENT: <task>`. On that reply the wrapper returns a
+`[[RUN-AGENT: <task>]]` marker instead of an answer; the guest's
+`ask` sees the marker, runs `/tmp/hermes-agent` right there in the
+same partition (same files — a file the user made is a file the
+agent sees), and asks again with the agent's report folded in as
+`HERMES REPORT:`. Prompts from inside the harness carry its baked-in
+system prompt and always go straight to the base model, so
+delegation is exactly one level deep. **Proof — verified 2026-10-31**
+(`chipformer/rv/bridgetest.py`, scripted seat): the full path —
+marker, in-partition agent run, real file work, report, final
+answer — passed with the file's contents verified from `od`
+(`boot-logs/bridge-scripted.out`). Seating a real model
+(`bridgetest --live`, or `liveterm --bridge`), whether it chooses
+to delegate is the model's call; the plumbing no longer is.
+
+**The bare-metal harness (2026-10-31).** The Linux harness needs a
+whole OS under it. `env/progs/agent.c` is the same gadget pattern as
+a single bare-metal program for the stock circuit map — the form
+that can be snapshotted into the weights next to C and MicroPython:
+a baked-in system prompt, exact tools (`store` / `recall` / `mul`),
+and the model's seat reached through a **mailbox in RAM** — the
+guest writes a prompt into `mb_out`, sets `mb_req`, and spins; the
+runner (`chipformer/rv/bareagent.py`) services it with the same
+backend callable `ask` uses. Verified on the reference machine
+against LM Studio: the guest's tool calls stored a word and the
+Rv32 `mul` tool returned the exact 17-digit product
+123456789 × 987654321 = 121932631112635269 — the multiplications a
+language model cannot do in its head are the ones its own CPU does
+exactly. The harness mechanics (mailbox, dedupe, nudge, round cap,
+labeled fallback) ran clean in every run; the seated 9B model's
+follow-through — several empty replies per run, and never quite
+assembling the final `SAY:` inside the cap — is the limit, as with
+the Linux harness. Build: `env/build_agent.sh` (xPack newlib route
+or Debian picolibc route); transcript in `boot-logs/bare-lm.out`.
 
 ## What is in this fork, in build order
 
@@ -148,6 +194,12 @@ IIR now reports THRE when no input is queued; same regression test.
    Numbered after the circuit port because it changes nothing about it:
    the window is a machine device, and which backend answers — echo,
    LM Studio, or the checkpoint's own layers — is a host-side choice.
+   On top of it: `env/linux/agent.sh` (the `hermes-agent` harness) +
+   `chipformer/rv/agenttest.py`, the delegation bridge
+   (`agent_bridge_backend` in `qwenbackend.py`, the marker path in
+   `ask.sh`) + `chipformer/rv/bridgetest.py`, and the bare-metal
+   harness (`env/progs/agent.c`, `env/build_agent.sh`,
+   `chipformer/rv/bareagent.py`).
 5. **The circuit port (next phase, spec'd here).** Upstream `core.py` compiles
    the RV32IM circuit from the same semantics `ref.py` defines. The port adds,
    in the compiler's IR: the AMO datapath (one read-modify-write record), the

@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from chipformer.rv.linux import LinuxMachine
-from chipformer.rv.qwenbackend import make_backend
+from chipformer.rv.qwenbackend import agent_bridge_backend, make_backend
 
 HERE = Path(__file__).parent
 ASK_SH = (HERE / "env" / "linux" / "ask.sh").read_text()
@@ -49,7 +49,7 @@ PAGE = """<!doctype html>
            padding:8px 14px; font:inherit; cursor:pointer; }
   p.hint { color:#7f8c98; font-size:12px; }
 </style>
-<h1>Qwen-Linux <span>Linux 6.1.14 on the Qwenputer reference CPU - login: root (no password), then try: ask "what is the capital of France"</span></h1>
+<h1>Qwen-Linux <span>Linux 6.1.14 on the Qwenputer reference CPU - login: root (no password), then try: ask "what is the capital of France" or hermes-agent &lt;a task&gt;</span></h1>
 <div id="term" tabindex="0"></div>
 <div id="row">
   <input id="box" placeholder="or type here and Send (Enter sends too) - good for phones">
@@ -126,8 +126,9 @@ class MachineThread(threading.Thread):
         install = (
             "cat > /tmp/ask <<'QWEOF'\n" + ASK_SH + "QWEOF\n"
             "cat > /tmp/agent <<'QWEOF'\n" + AGENT_SH + "QWEOF\n"
-            "chmod +x /tmp/ask /tmp/agent\n"
-            "echo ASK_READY ask-a-question or: agent <task for the model>\n"
+            "cp /tmp/agent /tmp/hermes-agent\n"
+            "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
+            "echo ASK_READY try ask \"a question\" or: hermes-agent <task for the model>\n"
         ).encode()
         pending = bytearray()
         while not self.m.halted:
@@ -163,11 +164,16 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8951)
     ap.add_argument("--backend", choices=("lmstudio", "echo", "off"), default="lmstudio")
     ap.add_argument("--lm-url", default=None)
+    ap.add_argument("--bridge", action="store_true",
+                    help="let the model delegate questions to the guest's "
+                         "hermes-agent (qwenbackend.agent_bridge_backend)")
     args = ap.parse_args()
 
     backend = None
     if args.backend != "off":
         backend = make_backend(args.backend, args.lm_url)
+        if args.bridge:
+            backend = agent_bridge_backend(backend)
     mt = MachineThread(Path(args.image).read_bytes(), Path(args.dtb).read_bytes(), backend)
     mt.start()
     model = getattr(backend, "model", None)

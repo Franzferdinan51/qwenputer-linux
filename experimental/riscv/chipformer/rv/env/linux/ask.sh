@@ -42,5 +42,23 @@ elif [ -c /dev/mem ]; then
 else
   printf 'QWEN:%s\n' "$1"
   IFS= read -r ans
+  # Delegation: when the host bridge is on (qwenbackend.agent_bridge),
+  # the model in the seat may answer with a [[RUN-AGENT: ...]] marker
+  # instead of an answer - meaning "let the machine's own hermes-agent
+  # do this". The agent then runs right here, in this same partition
+  # (same files), and its report is folded into a second ask. One level
+  # only: a second marker is printed as-is, never chased.
+  case "$ans" in
+    "[[RUN-AGENT: "*"]]")
+      t=$(printf '%s' "$ans" | sed 's/^\[\[RUN-AGENT: //; s/\]\]$//')
+      echo "[ask] the model delegated this to hermes-agent: $t"
+      HA=/tmp/hermes-agent; [ -x "$HA" ] || HA=/tmp/agent
+      rep=$($HA $t | sed -n 's/^AGENT_ANSWER: //p' | tail -1)
+      [ -z "$rep" ] && rep="(the hermes agent produced no answer)"
+      echo "[ask] hermes-agent reported: $rep"
+      printf 'QWEN:%s HERMES REPORT: %s\n' "$1" "$rep"
+      IFS= read -r ans
+      ;;
+  esac
   printf 'QWEN_ANSWER: %s\n' "$ans"
 fi
