@@ -28,30 +28,51 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
     ap.add_argument("--dtb", default=str(HERE / "env" / "linux" / "sixtyfourmb.dtb"))
-    ap.add_argument("--backend", choices=("echo", "lmstudio"), default="lmstudio")
+    ap.add_argument("--backend", choices=("echo", "lmstudio", "builtin"), default="builtin")
     ap.add_argument("--log", default=None)
     ap.add_argument("--max-steps", type=int, default=250_000_000)
     ap.add_argument("--slice", type=int, default=250_000)
+    ap.add_argument("--snapshot", default=None,
+                    help="start warm from a snapshot.py shell (skips boot+install)")
+    ap.add_argument("--fast", action="store_true",
+                    help="run on the fastlinux.c native core (full boot, no snapshot)")
+    ap.add_argument("--fast-bin", default=None)
     args = ap.parse_args()
 
     backend = make_backend(args.backend, None)
-    m = LinuxMachine()
-    m.on_qwen_prompt = backend
-    m.load_image(Path(args.image).read_bytes())
-    m.boot(Path(args.dtb).read_bytes())
+    if args.snapshot:
+        from chipformer.rv.snapshot import load as snap_load
+        m = snap_load(args.snapshot)
+        m.on_qwen_prompt = backend
+        script = f"/tmp/hermes-agent {TASK}\n".encode()
+        chunks = [script[i:i + 256] for i in range(0, len(script), 256)]
+        # fall through with phase preset below
+        _warm = True
+    else:
+        _warm = False
+        if args.fast:
+            from chipformer.rv.fastmachine import FastLinuxMachine
+            m = FastLinuxMachine(args.image, args.dtb, backend=backend,
+                                 binary=args.fast_bin)
+        else:
+            m = LinuxMachine()
+            m.on_qwen_prompt = backend
+            m.load_image(Path(args.image).read_bytes())
+            m.boot(Path(args.dtb).read_bytes())
 
-    script = (
-        "cat > /tmp/ask <<'QWEOF'\n" + ASK + "QWEOF\n"
-        "cat > /tmp/agent <<'QWEOF'\n" + AGENT + "QWEOF\n"
-        "cp /tmp/agent /tmp/hermes-agent\n"
-        "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
-        "echo STAGE_AGENT\n"
-        f"/tmp/hermes-agent {TASK}\n"
-    ).encode()
-    chunks = [script[i:i + 256] for i in range(0, len(script), 256)]
+        script = (
+            "cat > /tmp/ask <<'QWEOF'\n" + ASK + "QWEOF\n"
+            "cat > /tmp/agent <<'QWEOF'\n" + AGENT + "QWEOF\n"
+            "cp /tmp/agent /tmp/hermes-agent\n"
+            "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
+            "echo STAGE_AGENT\n"
+            f"/tmp/hermes-agent {TASK}\n"
+        ).encode()
+    if not _warm:
+        chunks = [script[i:i + 256] for i in range(0, len(script), 256)]
     logf = open(args.log, "wb") if args.log else None
     logged = 0
-    phase = 0
+    phase = 2 if _warm else 0
     phase_slice = 0
     fed = set()
     t0 = time.time()

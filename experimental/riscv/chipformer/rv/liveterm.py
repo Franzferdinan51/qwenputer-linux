@@ -100,15 +100,21 @@ poll();
 class MachineThread(threading.Thread):
     """Runs the guest in slices; auto-installs /tmp/ask once a shell is up."""
 
-    def __init__(self, image: bytes, dtb: bytes, backend):
+    def __init__(self, image: bytes, dtb: bytes, backend, machine=None, warm=False):
         super().__init__(daemon=True)
-        self.m = LinuxMachine()
+        if machine is not None:
+            self.m = machine
+            if warm:
+                self.phase = 2  # snapshot shells are already installed
+        else:
+            self.m = LinuxMachine()
+            self.m.load_image(image)
+            self.m.boot(dtb)
         if backend is not None:
             self.m.on_qwen_prompt = backend
-        self.m.load_image(image)
-        self.m.boot(dtb)
         self.lock = threading.Lock()
-        self.phase = 0  # 0 boot, 1 canary sent, 2 ask installed
+        if machine is None or not warm:
+            self.phase = 0  # 0 boot, 1 canary sent, 2 ask installed
         self.phase_steps = 0
         self.seen_len = 0
 
@@ -159,14 +165,19 @@ class MachineThread(threading.Thread):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("image")
+    ap.add_argument("image", nargs="?", default=None)
     ap.add_argument("--dtb", default=str(HERE / "env" / "linux" / "sixtyfourmb.dtb"))
     ap.add_argument("--port", type=int, default=8951)
-    ap.add_argument("--backend", choices=("lmstudio", "echo", "off"), default="lmstudio")
+    ap.add_argument("--backend", choices=("builtin", "lmstudio", "echo", "off"), default="builtin")
     ap.add_argument("--lm-url", default=None)
     ap.add_argument("--bridge", action="store_true",
                     help="let the model delegate questions to the guest's "
                          "hermes-agent (qwenbackend.agent_bridge_backend)")
+    ap.add_argument("--snapshot", default=None,
+                    help="start warm from a snapshot.py shell (image not needed)")
+    ap.add_argument("--fast", action="store_true",
+                    help="run the guest on the fastlinux.c native core")
+    ap.add_argument("--fast-bin", default=None)
     args = ap.parse_args()
 
     backend = None
@@ -174,7 +185,21 @@ def main() -> int:
         backend = make_backend(args.backend, args.lm_url)
         if args.bridge:
             backend = agent_bridge_backend(backend)
-    mt = MachineThread(Path(args.image).read_bytes(), Path(args.dtb).read_bytes(), backend)
+    machine = None
+    warm = False
+    image = dtb = b""
+    if args.snapshot:
+        from chipformer.rv.snapshot import load as snap_load
+        machine = snap_load(args.snapshot)
+        warm = True
+    elif args.fast:
+        from chipformer.rv.fastmachine import FastLinuxMachine
+        machine = FastLinuxMachine(args.image, args.dtb, backend=backend,
+                                   binary=args.fast_bin)
+    else:
+        image = Path(args.image).read_bytes()
+        dtb = Path(args.dtb).read_bytes()
+    mt = MachineThread(image, dtb, backend, machine=machine, warm=warm)
     mt.start()
     model = getattr(backend, "model", None)
     print(f"[liveterm: backend={args.backend}" + (f" model={model}" if model else "")

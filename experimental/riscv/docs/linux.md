@@ -174,6 +174,55 @@ assembling the final `SAY:` inside the cap — is the limit, as with
 the Linux harness. Build: `env/build_agent.sh` (xPack newlib route
 or Debian picolibc route); transcript in `boot-logs/bare-lm.out`.
 
+### The preconfigured brain: the built-in weights
+
+The harness is **preconfigured to think with the built-in weights —
+Qwen 3.5 4B, the model whose own weights host this machine's CPU**
+(the `builtin` backend in `qwenbackend.py`, and the default seat in
+`liveterm.py` / `agenttest.py` / `bridgetest.py`). It resolves the
+family in LM Studio's model list and pins it — a pristine/base build
+wins over a tagged fine-tune when both are present — and it refuses,
+loudly, when no Qwen 3.5 4B is available, rather than silently thinking
+with a different model. The older `lmstudio` backend (first loaded
+model, auto-detected) remains for experiments. Two practical notes:
+today's LM Studio build here is a fine-tune of Qwen 3.5 4B (the
+pristine base takes precedence automatically when one is added), and
+Qwen 3.5's thinking wants headroom — `QWEN_MAX_TOKENS=1024` for agent
+work; at 512 its first delegation reply once came back empty. With
+the built-in weights seated, the live proofs all pass — the agent
+round trip (`boot-logs/agent-builtin.out`) and, at 1024 tokens, the
+delegation bridge end to end: the model chose `AGENT:`, hermes-agent
+did the file work in the same partition, and the final answer folded
+its report in (`boot-logs/bridge-builtin.out`). In the circuit
+endgame this same backend slot is the checkpoint's own language
+layers; nothing on the guest side changes.
+
+### Running it fast: the native core and snapshots
+
+The reference machine is the oracle, not the vehicle: at ~0.5M
+instructions/s every boot is a minute and every agent test ten.
+This fork now has the Doom port's medicine, transplanted:
+
+- **`chipformer/rv/fastlinux.c` — a native core** mirroring
+  `linux.py` function for function (same traps, CSRs, devices, Qwen
+  window + console protocol, same deterministic 1-tick-per-retired-
+  instruction time), speaking a small fd 3/4 host protocol
+  (RUN / FEED / HASH + QWEN / QWENM prompt events) so the Python
+  drivers and backends are unchanged behind `fastmachine.py`.
+  **Parity is proven, not hoped**: at 8M and at 60M steps, the native
+  core and the Python machine retire identical step counts, produce
+  byte-identical console output, and hash identically over
+  pc + privilege + registers + steps + mtime + all 64 MiB of RAM
+  (`chipformer/rv/paritycheck.py`). Speed on the Mac: **~198M
+  steps/s vs ~0.5M** — a boot in ~0.3 s, a full agent round trip in
+  seconds of machine time; the model's reply latency is all that
+  remains. Drivers take `--fast [--fast-bin PATH]`.
+- **`chipformer/rv/snapshot.py` — warm shells**: prime once
+  (boot → login → install, ~150M steps), save the whole machine,
+  and later runs restore straight to the ready shell
+  (`--snapshot shell.snap` in the tests; `liveterm --snapshot`).
+  The snapshot agent test passes against the live model.
+
 ## What is in this fork, in build order
 
 1. **`chipformer/rv/linux.py` — the Linux-capable reference machine.**
@@ -199,7 +248,14 @@ or Debian picolibc route); transcript in `boot-logs/bare-lm.out`.
    (`agent_bridge_backend` in `qwenbackend.py`, the marker path in
    `ask.sh`) + `chipformer/rv/bridgetest.py`, and the bare-metal
    harness (`env/progs/agent.c`, `env/build_agent.sh`,
-   `chipformer/rv/bareagent.py`).
+   `chipformer/rv/bareagent.py`). The seat is preconfigured:
+   `builtin` in `qwenbackend.py` pins Qwen 3.5 4B — the built-in
+   weights — as the harness's default brain.
+4b. **Speed** — `chipformer/rv/fastlinux.c` (the native core) +
+   `chipformer/rv/fastmachine.py` (its Python face) +
+   `chipformer/rv/paritycheck.py` (the oracle-parity proof), and
+   `chipformer/rv/snapshot.py` (primed warm shells). The native core
+   is verified against step 1's machine, not instead of it.
 5. **The circuit port (next phase, spec'd here).** Upstream `core.py` compiles
    the RV32IM circuit from the same semantics `ref.py` defines. The port adds,
    in the compiler's IR: the AMO datapath (one read-modify-write record), the

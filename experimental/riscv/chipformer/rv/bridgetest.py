@@ -60,29 +60,47 @@ def main() -> int:
     ap.add_argument("--log", default=None)
     ap.add_argument("--max-steps", type=int, default=250_000_000)
     ap.add_argument("--slice", type=int, default=250_000)
+    ap.add_argument("--snapshot", default=None,
+                    help="start warm from a snapshot.py shell (skips boot+install)")
+    ap.add_argument("--fast", action="store_true",
+                    help="run on the fastlinux.c native core (full boot, no snapshot)")
+    ap.add_argument("--fast-bin", default=None)
     args = ap.parse_args()
 
     if args.live:
-        backend = agent_bridge_backend(make_backend("lmstudio", None))
+        backend = agent_bridge_backend(make_backend("builtin", None))
     else:
         backend = agent_bridge_backend(ScriptedSeat())
-    m = LinuxMachine()
-    m.on_qwen_prompt = backend
-    m.load_image(Path(args.image).read_bytes())
-    m.boot(Path(args.dtb).read_bytes())
+    if args.snapshot:
+        from chipformer.rv.snapshot import load as snap_load
+        m = snap_load(args.snapshot)
+        m.on_qwen_prompt = backend
+        script = f'/tmp/ask "{QUESTION}"\n'.encode()
+        _warm = True
+    else:
+        _warm = False
+        if args.fast:
+            from chipformer.rv.fastmachine import FastLinuxMachine
+            m = FastLinuxMachine(args.image, args.dtb, backend=backend,
+                                 binary=args.fast_bin)
+        else:
+            m = LinuxMachine()
+            m.on_qwen_prompt = backend
+            m.load_image(Path(args.image).read_bytes())
+            m.boot(Path(args.dtb).read_bytes())
 
-    script = (
-        "cat > /tmp/ask <<'QWEOF'\n" + ASK + "QWEOF\n"
-        "cat > /tmp/agent <<'QWEOF'\n" + AGENT + "QWEOF\n"
-        "cp /tmp/agent /tmp/hermes-agent\n"
-        "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
-        "echo STAGE_BRIDGE\n"
-        f'/tmp/ask "{QUESTION}"\n'
-    ).encode()
+        script = (
+            "cat > /tmp/ask <<'QWEOF'\n" + ASK + "QWEOF\n"
+            "cat > /tmp/agent <<'QWEOF'\n" + AGENT + "QWEOF\n"
+            "cp /tmp/agent /tmp/hermes-agent\n"
+            "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
+            "echo STAGE_BRIDGE\n"
+            f'/tmp/ask "{QUESTION}"\n'
+        ).encode()
     chunks = [script[i:i + 256] for i in range(0, len(script), 256)]
     logf = open(args.log, "wb") if args.log else None
     logged = 0
-    phase = 0
+    phase = 2 if _warm else 0
     phase_slice = 0
     fed = set()
     t0 = time.time()

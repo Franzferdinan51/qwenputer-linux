@@ -6,6 +6,13 @@ The device is deliberately backend-blind — today these are:
   * ``echo``     — deterministic, offline; proves the plumbing end to end.
   * ``lmstudio`` — whatever model is *already loaded* in LM Studio
                    (auto-detected via /v1/models; never triggers a load).
+  * ``builtin``  — the preconfigured seat for the harness: **Qwen 3.5 4B,
+                   the model whose own weights host this machine's CPU**,
+                   resolved by family from LM Studio's model list and
+                   pinned (a pristine/base build wins over fine-tunes
+                   when several match). This is the harness's default:
+                   hermes-agent's brain is the built-in weights, not
+                   whatever happens to be loaded.
 
 The endgame backend is the Qwenputer checkpoint's own language layers
 (the same model whose chip layers run the guest CPU); it drops in behind
@@ -22,13 +29,16 @@ def echo_backend(prompt: str) -> str:
     return f"qwen-echo: {prompt}"
 
 
-def lmstudio_backend(base_url: str | None = None, proxy: str | None = None):
-    """Return a backend that asks the model already loaded in LM Studio.
+def lmstudio_backend(base_url: str | None = None, proxy: str | None = None,
+                     model: str | None = None):
+    """Return a backend that asks a model in LM Studio.
 
     base_url: LM Studio root (default env QWEN_LM_URL, else
     http://127.0.0.1:1234 — right when the runner sits next to LM Studio,
     e.g. on the Mac). proxy: explicit HTTP proxy (env QWEN_LM_PROXY); from
     the VM the tailnet route is the :3130 variant of HTTPS_PROXY.
+    model: pin an exact model id (or env QWEN_MODEL); without a pin the
+    first listed model is used (the original auto-detect behavior).
     """
     base = (base_url or os.environ.get("QWEN_LM_URL")
             or "http://127.0.0.1:1234").rstrip("/")
@@ -48,7 +58,10 @@ def lmstudio_backend(base_url: str | None = None, proxy: str | None = None):
     models = call("/v1/models", timeout=15).get("data") or []
     if not models:
         raise RuntimeError(f"no model loaded in LM Studio at {base}")
-    model = models[0]["id"]
+    model = model or os.environ.get("QWEN_MODEL") or models[0]["id"]
+    if model not in [m["id"] for m in models]:
+        raise RuntimeError(f"pinned model {model!r} is not available in "
+                           f"LM Studio at {base}")
 
     def ask(prompt: str) -> str:
         out = call("/v1/chat/completions", {
@@ -61,6 +74,40 @@ def lmstudio_backend(base_url: str | None = None, proxy: str | None = None):
 
     ask.model = model  # for the runner's log line
     return ask
+
+
+# The built-in weights: Qwen 3.5 4B, the base model of the Qwenputer
+# checkpoint — the CPU running the guest lives in these weights, so the
+# harness is preconfigured to think with them too.
+BUILTIN_FAMILY = "qwen3.5-4b"
+
+
+def builtin_backend(base_url: str | None = None, proxy: str | None = None):
+    """The harness's preconfigured brain: Qwen 3.5 4B in LM Studio.
+
+    Resolves the family from the model list and pins it: a build whose
+    id carries no fine-tune tag (a pristine/base Qwen 3.5 4B) wins over
+    tagged fine-tunes when both are present; otherwise the first family
+    match serves. Raises when no Qwen 3.5 4B is available at all — the
+    harness must think with the built-in weights or say so, never
+    silently fall back to a different model.
+    """
+    base = (base_url or os.environ.get("QWEN_LM_URL")
+            or "http://127.0.0.1:1234").rstrip("/")
+    proxy = proxy or os.environ.get("QWEN_LM_PROXY")
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+        if proxy else urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(base + "/v1/models")
+    with opener.open(req, timeout=15) as r:
+        ids = [m["id"] for m in (json.loads(r.read()).get("data") or [])]
+    fam = [i for i in ids if BUILTIN_FAMILY in i.lower()]
+    if not fam:
+        raise RuntimeError(
+            f"the built-in weights ({BUILTIN_FAMILY}) are not available in "
+            f"LM Studio at {base}; load a Qwen 3.5 4B build first")
+    fam.sort(key=lambda i: ("3d-coder" in i.lower(), i))
+    return lmstudio_backend(base_url, proxy, model=fam[0])
 
 
 # A prompt from inside the guest harness always carries this phrase
@@ -108,4 +155,6 @@ def make_backend(name: str, lm_url: str | None = None):
         return echo_backend
     if name == "lmstudio":
         return lmstudio_backend(lm_url)
+    if name == "builtin":
+        return builtin_backend(lm_url)
     raise ValueError(f"unknown qwen backend {name!r}")

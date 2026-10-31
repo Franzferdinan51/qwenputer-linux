@@ -25,9 +25,11 @@ the machine Linux needs around it, following the proven
   (DATA/STATUS/CTRL) plus a console line protocol — the guest prints a line starting with
   `QWEN:`, the host-side language model answers, and the answer is typed back into the
   terminal for the guest to read. From the guest shell: `ask "your question"`. The backend
-  is a pluggable `str -> str` callable; today it's the model already loaded in LM Studio
-  (auto-detected, never loads one) — the seat the Qwenputer checkpoint's own language
-  layers take when the circuit port lands.
+  is a pluggable `str -> str` callable, **preconfigured to the built-in weights: Qwen 3.5
+  4B** — the model whose weights host the CPU — resolved by family in LM Studio and
+  pinned (the `builtin` backend; an auto-detect seat remains for experiments). That is
+  the seat the Qwenputer checkpoint's own language layers take when the circuit port
+  lands.
 
 Code: [`experimental/riscv/chipformer/rv/linux.py`](experimental/riscv/chipformer/rv/linux.py)
 (the machine), [`experimental/riscv/chipformer/rv/linuxboot.py`](experimental/riscv/chipformer/rv/linuxboot.py)
@@ -66,7 +68,24 @@ single ELF for the stock circuit map — baked-in prompt, exact `store`/`recall`
 `mul` tool returned 123456789 × 987654321 = 121932631112635269 exactly, a product
 no language model does reliably in its head. Getting the agent's long prompt out of
 the guest took a second UART fix — IIR now reports THRE as well as RDA. New tests:
-15 passed. Not yet done:
+15 passed.
+
+**Now preconfigured and fast.** The harness's seat is pinned to the **built-in
+weights, Qwen 3.5 4B** (see above) — and with that brain the live proofs pass
+cleanly: the agent round trip finishes with the model's own `SAY:`
+(`boot-logs/agent-builtin.out`), and the delegation bridge passes end to end with
+the real model choosing to delegate (`boot-logs/bridge-builtin.out`). And the
+machine itself got the Doom port's medicine: **`chipformer/rv/fastlinux.c`**, a
+native core mirroring the Python machine function for function — proven identical,
+not just similar: at 8M and 60M steps the two retire the same instructions, print
+byte-identical consoles, and hash identically over the full machine state
+(`paritycheck.py`). It runs **~198M steps/s vs the reference machine's ~0.5M** —
+a boot in about a third of a second, agent tests in seconds. Alongside it,
+**snapshots** (`snapshot.py`): prime a logged-in, tools-installed shell once and
+later runs restore straight to it. The live terminal
+(`liveterm.py --fast --bridge`, default backend `builtin`) now serves the whole
+stack. The Python machine remains the oracle every fast path is checked against.
+Not yet done:
 the final phase — porting these enhancements into the compiled in-weights circuit
 itself, so Linux runs inside the model the way C and MicroPython already do. That port
 is specified in the design doc; until it lands, Linux here runs on the reference machine
