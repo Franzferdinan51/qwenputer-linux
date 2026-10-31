@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="500" viewBox="0 0 1600 500" role="img" aria-labelledby="title desc">
+  <title id="title">Qwenputer</title>
+  <desc id="desc">A computer, compiled into the weights of a language model. Qwen3.5's tokens flow up through compiled computer layers; a stream of trace tokens runs the machine, and the model itself writes 48213 × 9917 = 478128321.</desc>
+  <defs>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" stroke="#141414"/></pattern>
+    <linearGradient id="beam" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#8b7cf6" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#8b7cf6" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#8b7cf6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="fadeL" x1="0" x2="1">
+      <stop offset="0" stop-color="#000"/><stop offset="0.12" stop-color="#000" stop-opacity="0"/>
+      <stop offset="0.88" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000"/>
+    </linearGradient>
+    <g id="pkt"><rect x="-6" y="-3" width="12" height="6" rx="2" fill="#a99cff"/></g>
+    <g id="tape" font-family="Consolas, Menlo, monospace" font-size="17">
+      <g fill="#0d0d0d" stroke="#3d3d3d">
+        <rect x="0" y="0" width="70" height="30" rx="5"/><rect x="78" y="0" width="34" height="30" rx="5"/>
+        <rect x="120" y="0" width="60" height="30" rx="5"/><rect x="188" y="0" width="34" height="30" rx="5"/>
+      </g>
+      <g fill="#888"><text x="10" y="21">48213</text><text x="88" y="21">×</text><text x="130" y="21">9917</text><text x="198" y="21">=</text></g>
+      <g fill="#171230" stroke="#8b7cf6">
+        <rect x="236" y="0" width="58" height="30" rx="5"/><rect x="300" y="0" width="34" height="30" rx="5"/>
+        <rect x="340" y="0" width="58" height="30" rx="5"/><rect x="404" y="0" width="34" height="30" rx="5"/>
+        <rect x="444" y="0" width="58" height="30" rx="5"/><rect x="508" y="0" width="34" height="30" rx="5"/>
+        <rect x="548" y="0" width="58" height="30" rx="5"/><rect x="612" y="0" width="34" height="30" rx="5"/>
+        <rect x="652" y="0" width="58" height="30" rx="5"/><rect x="716" y="0" width="34" height="30" rx="5"/>
+      </g>
+      <g fill="#a99cff" font-size="14">
+        <text x="243" y="20">@660</text><text x="311" y="20">7</text><text x="347" y="20">@661</text><text x="415" y="20">2</text>
+        <text x="451" y="20">@662</text><text x="519" y="20">3</text><text x="555" y="20">@663</text><text x="623" y="20">8</text>
+        <text x="659" y="20">@664</text><text x="727" y="20">2</text>
+      </g>
+      <rect x="764" y="0" width="118" height="30" rx="5" fill="#0d0d0d" stroke="#8b7cf6"/>
+      <text x="774" y="21" fill="#c9c0ff">478128321</text>
+    </g>
+  </defs>
+  <rect width="1600" height="500" fill="#000"/>
+  <rect width="1600" height="500" fill="url(#grid)"/>
+
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="86" y="200" fill="#eee" font-size="162" font-weight="500" letter-spacing="-7">Qwen<tspan fill="#8b7cf6">puter</tspan></text>
+    <text x="94" y="272" fill="#c8c8c8" font-size="42" letter-spacing="-0.5">A computer, compiled into</text>
+    <text x="94" y="326" fill="#c8c8c8" font-size="42" letter-spacing="-0.5">the weights of a language model.</text>
+  </g>
+
+  <g transform="translate(960 0)" font-family="Consolas, Menlo, monospace">
+    <g font-size="30">
+      <text x="0" y="58" fill="#8a8a8a">48213 × 9917 =</text>
+      <g fill="#8b7cf6">
+        <text x="250" y="58" opacity="0">4<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.40;0.41;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+        <text x="268" y="58" opacity="0">7<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.45;0.46;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+        <text x="286" y="58" opacity="0">8<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.50;0.51;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+        <text x="304" y="58" opacity="0">1<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.55;0.56;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+        <text x="322" y="58" opacity="0">2<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.60;0.61;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+        <text x="340" y="58" opacity="0">8<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.65;0.66;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+        <text x="358" y="58" opacity="0">3<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.70;0.71;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+        <text x="376" y="58" opacity="0">2<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.75;0.76;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+        <text x="394" y="58" opacity="0">1<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.80;0.81;0.95;1" dur="7s" repeatCount="indefinite"/></text>
+      </g>
+    </g>
+
+    <g fill="#0a0a0a" stroke="#4a4a4a" stroke-width="2">
+      <rect x="0" y="92" width="480" height="20" rx="4"/><rect x="0" y="120" width="480" height="20" rx="4"/>
+      <rect x="0" y="148" width="480" height="20" rx="4"/><rect x="0" y="176" width="480" height="20" rx="4"/>
+      <rect x="0" y="204" width="480" height="20" rx="4"/><rect x="0" y="232" width="480" height="20" rx="4"/>
+    </g>
+    <text x="500" y="178" fill="#777" font-size="17">Qwen3.5</text>
+
+    <g fill="#120f24" stroke="#8b7cf6" stroke-width="2">
+      <rect x="0" y="278" width="480" height="20" rx="4"><animate attributeName="fill" values="#120f24;#3b2f8a;#120f24;#120f24" keyTimes="0;0.08;0.2;1" dur="1.2s" repeatCount="indefinite"/></rect>
+      <rect x="0" y="306" width="480" height="20" rx="4"><animate attributeName="fill" values="#120f24;#120f24;#3b2f8a;#120f24;#120f24" keyTimes="0;0.15;0.23;0.35;1" dur="1.2s" repeatCount="indefinite"/></rect>
+      <rect x="0" y="334" width="480" height="20" rx="4"><animate attributeName="fill" values="#120f24;#120f24;#3b2f8a;#120f24;#120f24" keyTimes="0;0.3;0.38;0.5;1" dur="1.2s" repeatCount="indefinite"/></rect>
+      <rect x="0" y="362" width="480" height="20" rx="4"><animate attributeName="fill" values="#120f24;#120f24;#3b2f8a;#120f24;#120f24" keyTimes="0;0.45;0.53;0.65;1" dur="1.2s" repeatCount="indefinite"/></rect>
+    </g>
+    <text x="500" y="336" fill="#8b7cf6" font-size="17">CPU</text>
+
+    <g><use href="#pkt"/><animateMotion path="M90 388V272" dur="1.2s" repeatCount="indefinite"/></g>
+    <g><use href="#pkt"/><animateMotion path="M210 388V272" dur="1.2s" begin="-0.4s" repeatCount="indefinite"/></g>
+    <g><use href="#pkt"/><animateMotion path="M330 388V272" dur="1.2s" begin="-0.8s" repeatCount="indefinite"/></g>
+    <g><use href="#pkt"/><animateMotion path="M420 388V272" dur="1.2s" begin="-0.2s" repeatCount="indefinite"/></g>
+
+    <rect x="230" y="76" width="20" height="320" fill="url(#beam)" opacity="0.3"/>
+    <circle cx="240" r="5" fill="#c9c0ff">
+      <animate attributeName="cy" values="396;84" dur="2.4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.85;1" dur="2.4s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g transform="translate(0 432)">
+    <g>
+      <animateTransform attributeName="transform" type="translate" from="0 0" to="-900 0" dur="9s" repeatCount="indefinite"/>
+      <use href="#tape" x="40"/><use href="#tape" x="940"/><use href="#tape" x="1840"/>
+    </g>
+  </g>
+  <rect x="0" y="420" width="1600" height="54" fill="url(#fadeL)"/>
+</svg>

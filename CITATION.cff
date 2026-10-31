@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use Qwenputer, please cite it as below."
+title: "Qwenputer: a computer compiled into the weights of a pretrained language model"
+authors:
+  - family-names: Agrawal
+    given-names: Divyansh
+version: 0.1.0
+date-released: 2026-10-19
+license: MIT
+repository-code: "https://github.com/divagr18/qwenputer"
+type: software
