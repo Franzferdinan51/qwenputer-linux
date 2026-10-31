@@ -91,7 +91,7 @@ is the interaction interface: one stdlib-only page with Overview (seat model,
 circuit verdicts, live), Chat (streaming, straight to the built-in-weights
 seat), Terminal (the live guest terminal, embedded untouched), a Desktop
 placeholder (the framebuffer spike — the Doom live view proved the display
-path), links to the machine's other programs, and Settings (seat endpoint,
+path), the Qwenputer's own programs, and Settings (seat endpoint,
 model, temperature, token budget, system prompt). It resolves the seat by
 the builtin rule and never loads a model.
 

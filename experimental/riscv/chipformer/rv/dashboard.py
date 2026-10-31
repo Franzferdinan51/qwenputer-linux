@@ -11,8 +11,9 @@ One stdlib-only host server, one page, tabs:
   Terminal  - embeds the live guest terminal (liveterm, :8951) untouched
   Desktop   - placeholder: the framebuffer spike (Doom proved the display
               path: guest draws in its memory, host shows it, input goes back)
-  Apps      - the other programs on this machine (Hermes, Command Center,
-              News Connections)
+  Apps      - only the Qwenputer's own programs: the guest's ask and
+              agent, the notebook, MicroPython, the bare-metal agent,
+              the Doom port for the CPU
   Settings  - backend URL, model, temperature, token budget, system prompt;
               persisted to a JSON file next to the rig
 
@@ -263,7 +264,10 @@ the same trick works mechanically (the mailbox proved host access to
 circuit memory) but at ~17 instructions/second a desktop is a
 screenshot an hour, not a desktop.</p></div>
 </div></section>
-<section id="apps" class="tab"><div class="cards" id="apps"></div></section>
+<section id="apps" class="tab">
+<p style="color:var(--dim)">only what's on the Qwenputer itself.
+most of these run in the guest &mdash; tap one to open the terminal.</p>
+<div class="cards" id="apps"></div></section>
 <section id="settings" class="tab">
 <label>backend URL (the seat's OpenAI-compatible endpoint, on this machine)</label>
 <input type="text" id="s-backend">
@@ -288,11 +292,18 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
  if(b.dataset.t==='terminal'&&!$('term').src)
    $('term').src='http://'+location.hostname+':8951/';
 });
-const APPS=[['Hermes dashboard',9119,'the main Hermes agent on this Mac'],
-['Juno Command Center',8895,'fleet status'],
-['News Connections',8925,'the news graph']];
-$('apps').innerHTML=APPS.map(a=>'<a class="app" target="_blank" href="http://'
- +location.hostname+':'+a[1]+'/"><b>'+a[0]+'</b><span>'+a[2]+'</span></a>').join('');
+const APPS=[['live terminal','the Qwen-Linux guest shell itself — everything below runs here','Terminal tab'],
+['ask','ask the built-in weights a question; the answer is typed back into the guest','ask "your question"'],
+['hermes-agent','the guest agent — works through the weights with the whole Linux side: files, exact arithmetic, the notebook','hermes-agent "your task"'],
+['notebook','the guest\u2019s persistent memory at /root/nb — the agent writes plans and facts there and reads them back','inside the guest'],
+['MicroPython','Python running on the Qwenputer CPU (the upstream port)','on the circuit'],
+['bare-metal agent','agent.c — the harness compiled for the circuit itself: store / recall / mul through the mailbox in RAM','on the circuit'],
+['Doom','the Doom port for the Qwenputer CPU, grown memory map build','on the CPU port']];
+$('apps').innerHTML=APPS.map(a=>'<a class="app" href="#" data-go="terminal"><b>'
+ +a[0]+'</b><span>'+a[1]+'</span><span><code>'+a[2]+'</code></span></a>').join('');
+document.querySelectorAll('[data-go]').forEach(el=>el.onclick=e=>{
+ e.preventDefault();
+ document.querySelector('nav button[data-t="terminal"]').click();});
 async function status(){
  try{const r=await fetch('/api/status');const j=await r.json();
   $('seatmodel').textContent=j.seat.model||'unreachable';
