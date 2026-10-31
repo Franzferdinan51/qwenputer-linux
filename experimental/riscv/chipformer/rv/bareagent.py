@@ -24,7 +24,7 @@ from pathlib import Path
 from chipformer.rv import elf, ref
 from chipformer.rv.qwenbackend import make_backend
 
-PRODUCT = str(123456789 * 987654321)
+PRODUCT = str(123456 * 654321)
 
 
 def rd(m, addr):
@@ -60,7 +60,8 @@ def main() -> int:
                 "utf-8", "replace")
             prompts.append(prompt)
             answer = backend(prompt)
-            data = " ".join(str(answer).split())[:880].encode("utf-8", "replace")
+            cap = int(syms.get("mb_size", 896)) - 16
+            data = " ".join(str(answer).split())[:cap].encode("utf-8", "replace")
             for i, b in enumerate(data):
                 wr(m, syms["mb_in"] + i, b)
             m.ram[syms["mb_inlen"] >> 2] = len(data)

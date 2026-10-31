@@ -13,7 +13,7 @@
  *
  * Tools: store <key> <value> / recall <key> / mul <a> <b> (exact).
  * The task is baked in (pre-configured): remember a word, do an exact
- * 17-digit multiplication no language model does reliably in its head,
+ * multiplication no language model does reliably in its head,
  * and report both.
  */
 #include <stdio.h>
@@ -21,11 +21,17 @@
 #include <string.h>
 
 /* ---- the mailbox (symbols read by the runner; see bareagent.py) ---- */
+/* MB_SIZE is a build-time knob (build_agent.sh -DMB_SIZE): 896 on the
+ * stock 32 KB map; the grown 2 MB map build uses 8192 so long model
+ * answers fit whole instead of truncating at the old cap. */
+#ifndef MB_SIZE
+#define MB_SIZE 896
+#endif
 volatile unsigned int mb_req;
 volatile unsigned int mb_outlen;
 volatile unsigned int mb_inlen;
-volatile char mb_out[896];
-volatile char mb_in[896];
+volatile char mb_out[MB_SIZE];
+volatile char mb_in[MB_SIZE];
 
 static const char *SYS =
     "Answer with exactly one line, no explanation. Tools: "
@@ -37,9 +43,16 @@ static const char *SYS =
     "Example: TOOL mul 6 7, then after RESULT 42 you reply "
     "SAY: the product is 42.";
 
+/* Operand note (2026-10-31): the pair was 123456789 x 987654321 until
+ * the built-in brain (Qwen 3.5 4B) was measured falling into an
+ * endless reasoning loop on the 9-digit pair - it tries to work the
+ * product out in its head and never emits an answer (bisected live:
+ * the store-only task answers instantly, the 9-digit mul task never
+ * does, at any token budget). 6 digits x 6 digits (an 11-digit
+ * product) stays far beyond in-head reliability and answers cleanly. */
 static const char *TASK =
     "remember the word banana under the key fruit, compute "
-    "123456789 * 987654321 with the mul tool, then tell me the word "
+    "123456 * 654321 with the mul tool, then tell me the word "
     "under fruit and the product";
 
 /* ---- tiny key-value store ---- */
@@ -108,6 +121,17 @@ static const char *run_tool(const char *call) {
         while (*p && *p != ' ' && i < (int)sizeof(key) - 1) key[i++] = *p++;
         key[i] = 0;
         while (*p == ' ') p++;
+        /* a model that simulates ahead can glue the next call onto the
+         * value ("banana TOOL mul ...") - the value ends there */
+        const char *glue = strstr(p, " TOOL ");
+        if (glue) {
+            static char vbuf[96];
+            snprintf(vbuf, sizeof(vbuf), "%.*s", (int)(glue - p), p);
+            kv_put(key, vbuf);
+            snprintf(result_buf, sizeof(result_buf), "stored %s = %s",
+                     key, vbuf);
+            return result_buf;
+        }
         kv_put(key, p);
         snprintf(result_buf, sizeof(result_buf), "stored %s = %s", key, p);
         return result_buf;
@@ -139,7 +163,7 @@ static const char *run_tool(const char *call) {
 
 int main(void) {
     static char prompt[1200];
-    static char answer[896];
+    static char answer[MB_SIZE];
     static char prev_call[512];
     static char prev_result[256];
     const char *result = NULL;
@@ -157,7 +181,24 @@ int main(void) {
         char *say = strstr(answer, "SAY:");
         char *tool = strstr(answer, "TOOL ");
         if (tool && (!say || tool < say)) {
-            const char *call = tool + 5;
+            char *call = tool + 5;
+            /* one call per reply: a model that simulates ahead glues
+             * the whole plan onto its first call ("store a b TOOL mul
+             * ... RESULT ... SAY: ..."). Cut the call at the next call
+             * or at a simulated RESULT/SAY so exactly the first real
+             * call runs - and so the repeat check below compares the
+             * call itself, not the varying simulated tail. */
+            for (char *cut = call; (cut = strstr(cut, " TOOL ")) != NULL; ) {
+                char *after = cut + 6;
+                if (strncmp(after, "store ", 6) == 0 ||
+                    strncmp(after, "recall ", 7) == 0 ||
+                    strncmp(after, "mul ", 4) == 0) { *cut = 0; break; }
+                cut = after;
+            }
+            char *rc = strstr(call, " RESULT");
+            if (rc) *rc = 0;
+            char *sc = strstr(call, " SAY:");
+            if (sc) *sc = 0;
             if (strcmp(call, prev_call) == 0) {
                 static char nudge[384];
                 printf("[agent] repeat of the last call - not running it again\n");

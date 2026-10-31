@@ -223,6 +223,63 @@ This fork now has the Doom port's medicine, transplanted:
   (`--snapshot shell.snap` in the tests; `liveterm --snapshot`).
   The snapshot agent test passes against the live model.
 
+### Running it on the circuit itself
+
+Everything above runs the guest on a host-side machine (reference or
+native) with a model in the seat. The other seat for the bare-metal
+harness is the compiled circuit — the chip layers themselves:
+
+- **`chipformer/rv/circuitagent.py`** drives `env/progs/agent.c`
+  through the `fastexec` Executor: `core.snapshot` seeds the
+  circuit's tables from the ELF, then each generated token is one
+  instruction the circuit computes. The host's hands are the ones
+  the circuit gives it — the RAM tables' state rows in the executor
+  *are* the guest's memory (a store in the circuit is a row scatter
+  into the same tensors), so the mailbox is serviced by reading and
+  writing those rows directly; the guest binary and protocol do not
+  change. Verified before any free run: `fastexec.check` (executor
+  == IR evaluator, exact) and a 600-token free run matching the
+  reference trace token for token (`chipformer/rv/circdiag.py`).
+- **Measured on the stock circuit** (Mac CPU, ~269 tok/s): the
+  guest booted in-circuit, composed its prompts, and had them
+  serviced through the circuit's memory at tokens 14,336 / 79,360 /
+  160,768, firing its tools from the replies
+  (`boot-logs/circuit-echo.out`).
+- **With the built-in weights in the seat: PASS** — 82,122 tokens,
+  454 s, three mailbox rounds, final answer carrying the stored
+  word and the exact product, verified in Python by the runner
+  (`boot-logs/circuit-stock-builtin.out`). Three findings came with
+  it, all measured against the live model, not guessed:
+  (1) the 9-digit operand pair (123456789 × 987654321) sends this
+  brain into an endless reasoning loop — it tries to work the
+  product out in its head and never emits content at any budget up
+  to 8,192 tokens; the task was bisected live and the operands are
+  now 123456 × 654321 (an 11-digit product, still beyond in-head
+  reliability). The 6-digit pair still needs a ~4,096-token budget:
+  its thinking runs long even when it answers.
+  (2) This brain simulates ahead — it writes the whole plan,
+  including invented RESULTs and wrong products, into one reply.
+  The guest now enforces one call per reply (the call is cut at the
+  next simulated call / RESULT / SAY) and its repeat guard compares
+  the cut call, so a replayed first step is caught and nudged
+  instead of re-run. Both guards fired in the PASS run.
+  (3) Honest caveat: in the PASS run the `mul` tool itself never
+  fired — nudged past its replay loop, the model SAID the product
+  its simulation had produced, and that simulation happened to be
+  exact (it had invented four wrong products in earlier attempts).
+  The circuit, mailbox, guards, and answer are proven; this brain's
+  *delegation discipline* is not — it would rather simulate than
+  delegate, and its simulated arithmetic is usually wrong. That is
+  a harness/brain problem, not a circuit problem.
+- **The grown map applies here too.** The agent rebuilds for the
+  2 MB circuit (`env/rom-big.ld`, `AGENT_LD` + `AGENT_MB` knobs in
+  `env/build_agent.sh`): RAM 32 KB → 2 MB, and the mailbox widens
+  896 → 8,192 bytes so long model answers fit whole (the size is
+  recorded in the `.sym.json` and both runners honor it). The
+  grown graph + this ELF pass the same `fastexec.check` gate. The
+  grown-map compiler itself (spec/core changes) lives on the
+  `circuit-grown-map` branch, where the Doom port proved it.
+
 ## What is in this fork, in build order
 
 1. **`chipformer/rv/linux.py` — the Linux-capable reference machine.**
@@ -256,6 +313,12 @@ This fork now has the Doom port's medicine, transplanted:
    `chipformer/rv/paritycheck.py` (the oracle-parity proof), and
    `chipformer/rv/snapshot.py` (primed warm shells). The native core
    is verified against step 1's machine, not instead of it.
+4c. **The circuit seat** — `chipformer/rv/circuitagent.py` (the
+   bare-metal harness executed by the compiled circuit, mailbox
+   serviced through the executor's memory state) +
+   `chipformer/rv/circdiag.py` (the executor-vs-reference gate) +
+   `env/rom-big.ld` and the `AGENT_LD`/`AGENT_MB` build knobs (the
+   grown-map agent: 2 MB RAM, 8 KB mailbox).
 5. **The circuit port (next phase, spec'd here).** Upstream `core.py` compiles
    the RV32IM circuit from the same semantics `ref.py` defines. The port adds,
    in the compiler's IR: the AMO datapath (one read-modify-write record), the
