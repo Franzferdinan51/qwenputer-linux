@@ -6,7 +6,7 @@ with asm's encoders directly).
 """
 
 from chipformer.rv.asm import enc_i, enc_j, enc_r, enc_s, enc_u
-from chipformer.rv.linux import RAM_BASE, LinuxMachine
+from chipformer.rv.linux import QWEN_BASE, RAM_BASE, UART_BASE, LinuxMachine
 
 A0, A1, T0, T1, T2, S0, S1 = 10, 11, 5, 6, 7, 8, 9
 ECALL, EBREAK, MRET, WFI = 0x00000073, 0x00100073, 0x30200073, 0x10500073
@@ -259,3 +259,75 @@ def test_subword_store_masks_to_width():
     ])
     m.run(5)
     assert m.x[A0] == 0xFFFF00FF
+
+
+def test_qwen_device_mmio_roundtrip():
+    m = LinuxMachine()
+    seen = []
+    m.on_qwen_prompt = lambda p: seen.append(p) or f"qwen-echo: {p}"
+    for ch in b"hi":
+        m.write_mem(QWEN_BASE, ch, 1)            # DATA: prompt bytes
+    m.write_mem(QWEN_BASE + 8, 1, 1)             # CTRL: submit
+    assert m.read_mem(QWEN_BASE + 4, 1) == 1     # STATUS: answer waiting
+    got = bytearray()
+    while (b := m.read_mem(QWEN_BASE, 1)) != 0:  # DATA: answer, NUL-terminated
+        got.append(b)
+    assert bytes(got) == b"qwen-echo: hi"
+    assert m.read_mem(QWEN_BASE + 4, 1) == 0     # drained
+    m.write_mem(QWEN_BASE, ord("x"), 1)
+    m.write_mem(QWEN_BASE + 8, 2, 1)             # CTRL: clear
+    m.write_mem(QWEN_BASE + 8, 1, 1)             # submit the (now empty) prompt
+    assert seen == ["hi", ""]                    # the 'x' never reached the model
+    assert m.read_mem(QWEN_BASE, 1) == ord("q")  # "qwen-echo: " still answers
+
+
+def test_qwen_device_no_backend_still_answers():
+    m = LinuxMachine()
+    m.write_mem(QWEN_BASE, ord("?"), 1)
+    m.write_mem(QWEN_BASE + 8, 1, 1)
+    assert m.read_mem(QWEN_BASE, 1) == ord("[")  # "[qwen: no model attached]"
+
+
+def test_qwen_device_guest_program():
+    # the whole exchange through real load/store instructions
+    m = machine([
+        lui(T0, 0x10010),        # t0 = 0x10010000, the Qwen window
+        addi(T1, 0, 65),         # 'A'
+        sb(T1, T0, 0),           # DATA <- 'A'
+        addi(T1, 0, 1),
+        sb(T1, T0, 8),           # CTRL <- submit
+        lb(A0, T0, 4),           # STATUS
+        lb(A1, T0, 0),           # first answer byte
+    ])
+    m.on_qwen_prompt = lambda p: f"qwen-echo: {p}"
+    m.run(7)
+    assert m.x[A0] == 1
+    assert m.x[A1] == ord("q")   # "qwen-echo: A"
+
+
+def test_uart_iir_reflects_rx_state():
+    # irq=0 port: the guest's backup-timer poll reads IIR to decide whether
+    # to drain the receiver, so IIR must show RDA while input is queued -
+    # a constant NO_INT starved console input after boot (found 2026-10-31:
+    # getty never consumed a single byte in 100M steps).
+    m = LinuxMachine()
+    assert m.read_mem(UART_BASE + 2, 1) == 0x01  # NO_INT, queue empty
+    m.feed_input(b"root\n")
+    assert m.read_mem(UART_BASE + 2, 1) == 0x04  # RDA, bytes waiting
+    for _ in range(5):
+        m.read_mem(UART_BASE, 1)
+    assert m.read_mem(UART_BASE + 2, 1) == 0x01  # drained
+
+
+def test_qwen_console_line_protocol():
+    # the guest prints "QWEN:hi" on its console; the answer is typed back
+    words = [lui(T0, 0x10000)]  # UART base
+    for ch in b"QWEN:hi\n":
+        words += [addi(T1, 0, ch), sb(T1, T0, 0)]
+    m = machine(words)
+    seen = []
+    m.on_qwen_prompt = lambda p: seen.append(p) or f"qwen-echo: {p}"
+    m.run(len(words))
+    assert seen == ["hi"]
+    assert bytes(m.inp) == b"qwen-echo: hi\n"  # queued as console input
+    assert b"QWEN:hi\n" in bytes(m.out)        # the request line stays visible

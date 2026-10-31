@@ -11,6 +11,13 @@ Adds, over RV32IM + Zba:
   * the machine around the core: 64 MiB of RAM at 0x80000000, an 8250 UART at
     0x10000000, a CLINT at 0x11000000 (msip / mtimecmp / mtime, 1 MHz), and a
     SYSCON poweroff/reboot register at 0x11100000.
+  * a Qwen coprocessor window at 0x10010000 (the /dev/qwen seam): the guest
+    writes prompt bytes to DATA (+0), writes 1 to CTRL (+8) to submit, polls
+    STATUS (+4, bit 0 = answer waiting), and reads the NUL-terminated answer
+    back from DATA. The host side answers through ``on_qwen_prompt`` — today
+    a backend module (echo / LM Studio), in the endgame the Qwenputer
+    checkpoint's own language layers, frozen while the CPU runs and woken
+    only for these big semantic jobs. See docs/linux.md.
 
 Deterministic time: ``mtime`` advances ``ticks_per_step`` per retired
 instruction (default 1, i.e. the core runs at an implied 1 MIPS against the
@@ -24,6 +31,7 @@ from chipformer.rv.ref import M32, alu, decode, sx, taken
 
 RAM_BASE = 0x80000000
 UART_BASE = 0x10000000
+QWEN_BASE = 0x10010000
 CLINT_BASE = 0x11000000
 SYSCON_BASE = 0x11100000
 MMIO_LO, MMIO_HI = 0x10000000, 0x12000000
@@ -78,6 +86,10 @@ class LinuxMachine:
     msip: int = 0
     reservation: int | None = None
     uart_regs: dict[int, int] = field(default_factory=dict)
+    qwen_prompt: bytearray = field(default_factory=bytearray)
+    qwen_response: bytearray = field(default_factory=bytearray)
+    qwen_line: bytearray = field(default_factory=bytearray)
+    on_qwen_prompt = None  # optional callback(str) -> str behind the Qwen device
     csr_fallback: dict[int, int] = field(default_factory=dict)  # unknown CSR -> touches
     on_output = None  # optional callback(bytes) for streamed UART output
 
@@ -131,7 +143,11 @@ class LinuxMachine:
                 return self.uart_regs.get(0, 0)
             return self.inp.pop(0) if self.inp else 0
         if off == 2:
-            return 0x01  # IIR: no interrupt pending (the kernel polls LSR)
+            # IIR reports the receiver state even with no IRQ line wired
+            # (this port is irq=0): the 8250 driver's backup-timer poll
+            # reads IIR and only drains the receiver when it shows RDA.
+            # A constant NO_INT here starves guest input completely.
+            return 0x04 if self.inp else 0x01
         if off == 5:
             return 0x60 | (1 if self.inp else 0)  # LSR: THR empty, + RX ready
         return self.uart_regs.get(off, 0)
@@ -141,10 +157,76 @@ class LinuxMachine:
             self.out.append(v)
             if self.on_output:
                 self.on_output(bytes([v]))
+            self._qwen_line_feed(v)
             return
         self.uart_regs[off] = v
 
+    def _qwen_line_feed(self, v: int) -> None:
+        """The console face of the Qwen device: a guest program prints a
+        line starting with ``QWEN:`` and the answer is typed back as
+        console input, one line, for the program's ``read`` to collect.
+        The prebuilt kernel has no /dev/mem and no spare UART, so this is
+        the channel its shell can actually use; the MMIO window remains
+        the device contract for kernels that can reach it. In the
+        endgame this is the terminal-server pattern: the model sits on
+        the console line itself."""
+        if v == 0x0A:
+            line = bytes(self.qwen_line)
+            self.qwen_line.clear()
+            if line.startswith(b"QWEN:") and self.on_qwen_prompt is not None:
+                prompt = line[5:].decode("utf-8", "replace").strip()
+                try:
+                    answer = str(self.on_qwen_prompt(prompt))
+                except Exception as e:  # a dead backend must not hang the guest
+                    answer = f"[qwen backend error: {e}]"
+                flat = " ".join(answer.split())  # one line, for `read`
+                self.inp += flat.encode("utf-8", "replace") + b"\n"
+        elif v != 0x0D:
+            self.qwen_line.append(v)
+            if len(self.qwen_line) > 4096:
+                self.qwen_line.clear()
+
+    # ---- Qwen coprocessor window -------------------------------------------
+    # DATA (+0): write appends a prompt byte; read pops an answer byte
+    # (0 when the queue is empty — answers are NUL-terminated, so 0 is also
+    # the end marker). STATUS (+4): bit 0 = answer bytes waiting.
+    # CTRL (+8): write 1 = submit the prompt, 2 = clear both queues.
+    # Submission is synchronous: the machine pauses while the model thinks,
+    # which is the honest shape of this device — the CPU is meant to wait
+    # on its coprocessor, and at circuit speeds the wait dominates anyway.
+
+    def _qwen_read(self, off: int) -> int:
+        if off == 0:
+            return self.qwen_response.pop(0) if self.qwen_response else 0
+        if off == 4:
+            return 1 if self.qwen_response else 0
+        return 0
+
+    def _qwen_write(self, off: int, v: int) -> None:
+        if off == 0:
+            self.qwen_prompt.append(v)
+        elif off == 8:
+            if v == 1:
+                self._qwen_submit()
+            elif v == 2:
+                self.qwen_prompt.clear()
+                self.qwen_response.clear()
+
+    def _qwen_submit(self) -> None:
+        prompt = bytes(self.qwen_prompt).decode("utf-8", "replace")
+        self.qwen_prompt.clear()
+        if self.on_qwen_prompt is None:
+            answer = "[qwen: no model attached]"
+        else:
+            try:
+                answer = str(self.on_qwen_prompt(prompt))
+            except Exception as e:  # a dead backend must not hang the guest
+                answer = f"[qwen backend error: {e}]"
+        self.qwen_response += answer.encode("utf-8", "replace") + b"\0"
+
     def _mmio_read(self, addr: int, n: int) -> int:
+        if QWEN_BASE <= addr < QWEN_BASE + 0x10:
+            return sum(self._qwen_read(addr - QWEN_BASE + i) << 8 * i for i in range(n))
         if UART_BASE <= addr < UART_BASE + 0x100:
             return sum(self._uart_read(addr - UART_BASE + i) << 8 * i for i in range(n))
         if addr == CLINT_BASE:
@@ -156,6 +238,10 @@ class LinuxMachine:
         return 0
 
     def _mmio_write(self, addr: int, v: int, n: int) -> None:
+        if QWEN_BASE <= addr < QWEN_BASE + 0x10:
+            for i in range(n):
+                self._qwen_write(addr - QWEN_BASE + i, v >> 8 * i & 0xFF)
+            return
         if UART_BASE <= addr < UART_BASE + 0x100:
             for i in range(n):
                 self._uart_write(addr - UART_BASE + i, v >> 8 * i & 0xFF)

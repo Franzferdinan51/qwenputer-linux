@@ -26,9 +26,19 @@ def main() -> int:
     ap.add_argument("--slice", type=int, default=250_000)
     ap.add_argument("--type", default="", help=";-separated console commands, typed after boot")
     ap.add_argument("--quiet", action="store_true", help="no progress lines on stderr")
+    ap.add_argument("--qwen", choices=("off", "echo", "lmstudio"), default="echo",
+                    help="backend behind the Qwen coprocessor device (guest /tmp/ask)")
+    ap.add_argument("--lm-url", default=None,
+                    help="LM Studio root for --qwen lmstudio (default: env QWEN_LM_URL or http://127.0.0.1:1234)")
     args = ap.parse_args()
 
     m = LinuxMachine()
+    if args.qwen != "off":
+        from chipformer.rv.qwenbackend import make_backend
+        m.on_qwen_prompt = make_backend(args.qwen, args.lm_url)
+        model = getattr(m.on_qwen_prompt, "model", None)
+        print(f"[qwen device: backend={args.qwen}" + (f" model={model}]" if model else "]"),
+              file=sys.stderr)
     m.load_image(Path(args.image).read_bytes())
     m.boot(Path(args.dtb).read_bytes())
 
