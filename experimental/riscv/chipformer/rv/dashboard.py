@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""Qwenputer dashboard - the interaction interface for Qwenputer-Linux.
+
+One stdlib-only host server, one page, tabs:
+
+  Overview  - seat model, circuit runs, terminal health
+  Chat      - streaming chat with the built-in-weights brain; the seat is an
+              OpenAI-compatible endpoint on this machine (Settings picks it),
+              resolved by the same builtin rule as qwenbackend: the
+              qwen3.5-4b family member already loaded, never a fresh load
+  Terminal  - embeds the live guest terminal (liveterm, :8951) untouched
+  Desktop   - placeholder: the framebuffer spike (Doom proved the display
+              path: guest draws in its memory, host shows it, input goes back)
+  Apps      - the other programs on this machine (Hermes, Command Center,
+              News Connections)
+  Settings  - backend URL, model, temperature, token budget, system prompt;
+              persisted to a JSON file next to the rig
+
+Run:  python3 dashboard.py [--port 8952]
+"""
+
+import argparse
+import json
+import os
+import socket
+import subprocess
+import time
+import urllib.request
+import urllib.error
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+SETTINGS_PATH = os.environ.get(
+    "QWEN_DASH_SETTINGS",
+    os.path.expanduser("~/qwenputer-test/dash-settings.json"))
+START = time.time()
+
+DEFAULTS = {
+    "backend_url": "http://127.0.0.1:1234",
+    "model": "auto",
+    "temperature": 0.2,
+    "max_tokens": 4096,
+    "system_prompt": (
+        "You are the brain of Qwenputer-Linux: a Qwen 3.5 4B model with a "
+        "RISC-V computer compiled into its own weights. Answer directly "
+        "and concisely. Never invent tool results or arithmetic - exact "
+        "work belongs to the computer; say what it should compute."),
+}
+
+
+def load_settings():
+    s = dict(DEFAULTS)
+    try:
+        with open(SETTINGS_PATH) as f:
+            s.update(json.load(f))
+    except Exception:
+        pass
+    return s
+
+
+def save_settings(new):
+    s = load_settings()
+    for k in DEFAULTS:
+        if k in new:
+            s[k] = new[k]
+    s["temperature"] = float(s["temperature"])
+    s["max_tokens"] = int(s["max_tokens"])
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(s, f, indent=1)
+    return s
+
+
+def resolve_model(s):
+    """Builtin rule (mirrors qwenbackend.builtin_backend): the qwen3.5-4b
+    family member already listed by the backend; a pristine base id wins
+    over fine-tune tags; never loads anything."""
+    try:
+        url = s["backend_url"].rstrip("/") + "/v1/models"
+        with urllib.request.urlopen(url, timeout=5) as r:
+            ids = [d["id"] for d in json.load(r).get("data", [])]
+    except Exception as e:
+        return None, str(e)[:160]
+    if not ids:
+        return None, "backend listed no models"
+    want = (s.get("model") or "auto").strip()
+    if want != "auto" and want in ids:
+        return want, None
+    fam = [i for i in ids if "qwen3.5-4b" in i.lower()]
+    if fam:
+        fam.sort(key=lambda i: ("3d-coder" in i.lower(), i))
+        return fam[0], None
+    return ids[0], None
+
+
+def tail(path, n=6000):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - n))
+            return f.read().decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def tcp_up(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except Exception:
+        return False
+
+
+def proc_running(pat):
+    try:
+        out = subprocess.run(["pgrep", "-f", pat], capture_output=True,
+                             text=True, timeout=5)
+        return bool(out.stdout.strip())
+    except Exception:
+        return False
+
+
+def get_status():
+    s = load_settings()
+    model, err = resolve_model(s)
+    stock_out = tail(os.path.expanduser(
+        "~/qwenputer-test/circuit-stock-builtin.log"))
+    grown_log = tail(os.path.expanduser(
+        "~/qwenputer-circuit-test/circuit-builtin.log"))
+    grown_out = tail(os.path.expanduser(
+        "~/qwenputer-circuit-test/circuit-builtin.out"), 1200)
+    return {
+        "time": time.strftime("%H:%M:%S"),
+        "uptime_s": int(time.time() - START),
+        "seat": {"model": model, "backend": s["backend_url"], "error": err},
+        "stock": {"pass": "CIRCUIT AGENT: PASS" in stock_out},
+        "grown": {
+            "running": proc_running("circuitagent agent-big"),
+            "pass": "CIRCUIT AGENT: PASS" in grown_log,
+            "log_tail": grown_log[-600:],
+            "out_tail": grown_out[-300:],
+        },
+        "terminal_up": tcp_up(8951),
+    }
+
+
+PAGE = r"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwenputer</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#2a3240;--tx:#e8ecf1;--dim:#9aa7b5;
+--acc:#e8b93e;--ok:#3fb950;--bad:#f85149}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);
+font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif}
+header{display:flex;align-items:baseline;gap:12px;padding:14px 18px 6px}
+h1{font-size:21px;margin:0;letter-spacing:.06em}
+.sub{color:var(--dim);font-size:13px}
+#seat{margin-left:auto;color:var(--dim);font-size:13px;text-align:right}
+#seat b{color:var(--tx)}
+nav{display:flex;gap:4px;padding:8px 14px 0;border-bottom:1px solid var(--line);
+flex-wrap:wrap}
+nav button{background:none;border:0;border-bottom:2px solid transparent;
+color:var(--dim);font:inherit;padding:8px 12px;cursor:pointer}
+nav button.on{color:var(--tx);border-bottom-color:var(--acc)}
+main{padding:16px;max-width:980px;margin:0 auto}
+.tab{display:none}.tab.on{display:block}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));
+gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:14px}
+.card h3{margin:0 0 8px;font-size:14px;letter-spacing:.05em;color:var(--acc)}
+.card p{margin:6px 0;color:var(--tx)}
+.card .dim{color:var(--dim);font-size:13px}
+.badge{display:inline-block;padding:1px 8px;border-radius:20px;font-size:12px;
+border:1px solid var(--line)}
+.badge.ok{color:var(--ok);border-color:var(--ok)}
+.badge.bad{color:var(--bad);border-color:var(--bad)}
+pre{background:#0a0d12;border:1px solid var(--line);border-radius:8px;
+padding:10px;font-size:12px;overflow:auto;max-height:180px;white-space:pre-wrap}
+a{color:var(--acc)}
+#msgs{height:56vh;overflow-y:auto;padding:6px 2px}
+.msg{max-width:82%;padding:9px 13px;border-radius:12px;margin:8px 0;
+white-space:pre-wrap;word-wrap:break-word}
+.msg.u{background:#1f3a5f;margin-left:auto}
+.msg.a{background:var(--card);border:1px solid var(--line)}
+.msg .who{font-size:11px;color:var(--dim);margin-bottom:3px}
+.msg .think{color:var(--dim);font-size:13px;border-left:2px solid var(--line);
+padding-left:8px;margin-bottom:6px;white-space:pre-wrap}
+#chatbar{display:flex;gap:8px;margin-top:8px}
+#inp{flex:1;background:var(--card);border:1px solid var(--line);color:var(--tx);
+border-radius:10px;padding:11px;font:inherit;resize:none}
+button.act{background:var(--acc);color:#111;border:0;border-radius:10px;
+padding:0 20px;font:inherit;font-weight:600;cursor:pointer}
+button.act:disabled{opacity:.45}
+iframe{width:100%;height:72vh;border:1px solid var(--line);border-radius:10px;
+background:#000}
+label{display:block;margin:12px 0 4px;color:var(--dim);font-size:13px}
+input[type=text],input[type=number],textarea{width:100%;background:var(--card);
+border:1px solid var(--line);color:var(--tx);border-radius:8px;padding:9px;
+font:inherit}
+.app{display:block;text-decoration:none;background:var(--card);
+border:1px solid var(--line);border-radius:10px;padding:14px;color:var(--tx)}
+.app b{font-size:16px}.app span{display:block;color:var(--dim);font-size:13px;
+margin-top:3px}
+code{background:#0a0d12;padding:1px 6px;border-radius:5px}
+</style></head><body>
+<header><h1>QWENPUTER</h1>
+<div class="sub">one model file &mdash; a brain and a computer</div>
+<div id="seat">seat: <b id="seatmodel">&hellip;</b><br><span id="seatsub"></span></div>
+</header>
+<nav>
+<button data-t="overview" class="on">Overview</button>
+<button data-t="chat">Chat</button>
+<button data-t="terminal">Terminal</button>
+<button data-t="desktop">Desktop</button>
+<button data-t="apps">Apps</button>
+<button data-t="settings">Settings</button>
+</nav>
+<main>
+<section id="overview" class="tab on"><div class="cards">
+<div class="card"><h3>THE BRAIN</h3>
+<p id="ov-model">&hellip;</p>
+<p class="dim">the built-in Qwen 3.5 4B weights, served as the seat.
+the chat tab talks to this. the computer in the weights asks it
+questions the same way.</p></div>
+<div class="card"><h3>THE COMPUTER IN THE WEIGHTS</h3>
+<p>stock circuit agent: <span id="ov-stock" class="badge">?</span></p>
+<p>grown 2 MB circuit: <span id="ov-grown" class="badge">?</span></p>
+<pre id="ov-grownlog"></pre></div>
+<div class="card"><h3>GUEST AGENT (LINUX SIDE)</h3>
+<p class="dim">in the terminal tab, the guest has its own agent that
+works through the weights:</p>
+<p><code>hermes-agent "your task here"</code></p>
+<p class="dim">quotes, no angle brackets &mdash; the shell eats those.
+it can use the whole Linux side: files, the notebook at
+<code>/root/nb</code>, exact arithmetic.</p></div>
+<div class="card"><h3>LIVE TERMINAL</h3>
+<p id="ov-term">&hellip;</p>
+<p class="dim">Qwen-Linux on the fast core &mdash; full guest shell,
+<code>ask "a question"</code> talks to the weights.</p></div>
+</div></section>
+<section id="chat" class="tab">
+<div id="msgs"></div>
+<div id="chatbar">
+<textarea id="inp" rows="2" placeholder="talk to the built-in weights&hellip;"></textarea>
+<button class="act" id="send">Send</button>
+</div>
+<p class="dim" style="color:var(--dim);font-size:12px">Enter sends,
+Shift+Enter makes a new line. This chat is with the same 4B brain the
+in-weights computer consults.</p>
+</section>
+<section id="terminal" class="tab">
+<iframe id="term" title="Qwen-Linux terminal"></iframe>
+</section>
+<section id="desktop" class="tab"><div class="cards">
+<div class="card"><h3>DESKTOP &mdash; NOT BUILT YET</h3>
+<p>the display path is proven: Doom drew into guest memory and the
+host showed it, with keys going back in. a framebuffer shell &mdash;
+a screen window in guest memory, a pointer, simple windows &mdash;
+is the planned spike, and it will live in this tab.</p>
+<p class="dim">realistic on the fast core. on the in-weights circuit
+the same trick works mechanically (the mailbox proved host access to
+circuit memory) but at ~17 instructions/second a desktop is a
+screenshot an hour, not a desktop.</p></div>
+</div></section>
+<section id="apps" class="tab"><div class="cards" id="apps"></div></section>
+<section id="settings" class="tab">
+<label>backend URL (the seat's OpenAI-compatible endpoint, on this machine)</label>
+<input type="text" id="s-backend">
+<label>model (auto = the qwen3.5-4b already loaded; or an exact model id)</label>
+<input type="text" id="s-model">
+<label>temperature</label>
+<input type="number" id="s-temp" step="0.1" min="0" max="2">
+<label>max tokens per reply (the coder brain thinks first &mdash; 4096 is the working floor for tool talk)</label>
+<input type="number" id="s-tokens" step="256" min="256">
+<label>chat system prompt</label>
+<textarea id="s-sys" rows="4"></textarea>
+<p><button class="act" id="save" style="padding:10px 22px">Save settings</button>
+<span id="saved" style="color:var(--ok)"></span></p>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));
+ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+ b.classList.add('on');$(b.dataset.t).classList.add('on');
+ if(b.dataset.t==='terminal'&&!$('term').src)
+   $('term').src='http://'+location.hostname+':8951/';
+});
+const APPS=[['Hermes dashboard',9119,'the main Hermes agent on this Mac'],
+['Juno Command Center',8895,'fleet status'],
+['News Connections',8925,'the news graph']];
+$('apps').innerHTML=APPS.map(a=>'<a class="app" target="_blank" href="http://'
+ +location.hostname+':'+a[1]+'/"><b>'+a[0]+'</b><span>'+a[2]+'</span></a>').join('');
+async function status(){
+ try{const r=await fetch('/api/status');const j=await r.json();
+  $('seatmodel').textContent=j.seat.model||'unreachable';
+  $('seatsub').textContent=j.seat.error?j.seat.error:('via '+j.seat.backend);
+  $('ov-model').textContent=j.seat.model||('unreachable: '+(j.seat.error||''));
+  const st=$('ov-stock');st.textContent=j.stock.pass?'PASS':'no verdict';
+  st.className='badge '+(j.stock.pass?'ok':'bad');
+  const gr=$('ov-grown');
+  gr.textContent=j.grown.pass?'PASS':(j.grown.running?'running':'not running');
+  gr.className='badge '+(j.grown.pass?'ok':'');
+  $('ov-grownlog').textContent=(j.grown.log_tail||'')+(j.grown.out_tail||'');
+  $('ov-term').innerHTML=j.terminal_up?
+   '<span class="badge ok">up</span> &mdash; open the Terminal tab':
+   '<span class="badge bad">down</span>';
+ }catch(e){}
+}
+status();setInterval(status,10000);
+const hist=[];
+function bubble(role,text){
+ const d=document.createElement('div');d.className='msg '+(role==='user'?'u':'a');
+ d.innerHTML='<div class="who">'+(role==='user'?'you':'qwen 3.5 4b')+'</div>';
+ const body=document.createElement('div');body.textContent=text||'';
+ d.appendChild(body);$('msgs').appendChild(d);$('msgs').scrollTop=1e9;
+ return body;
+}
+async function send(){
+ const text=$('inp').value.trim();if(!text)return;
+ $('inp').value='';$('send').disabled=true;
+ bubble('user',text);hist.push({role:'user',content:text});
+ const body=bubble('assistant','');
+ let think=document.createElement('div');think.className='think';
+ think.style.display='none';body.parentNode.insertBefore(think,body);
+ let content='',reasoning='';
+ try{
+  const r=await fetch('/api/chat',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({messages:hist})});
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+  while(true){const{value,done}=await rd.read();if(done)break;
+   buf+=dec.decode(value,{stream:true});
+   let i;while((i=buf.indexOf('\n\n'))>=0){
+    const ev=buf.slice(0,i);buf=buf.slice(i+2);
+    if(!ev.startsWith('data:'))continue;
+    const j=JSON.parse(ev.slice(5));
+    if(j.delta){content+=j.delta;body.textContent=content;}
+    if(j.reasoning){reasoning+=j.reasoning;think.style.display='block';
+     think.textContent=reasoning;}
+    if(j.error){body.textContent='[error] '+j.error;}
+    $('msgs').scrollTop=1e9;
+   }}
+ }catch(e){body.textContent='[connection error] '+e;}
+ if(!content&&reasoning){body.textContent=reasoning;}
+ if(content)hist.push({role:'assistant',content});
+ $('send').disabled=false;$('inp').focus();
+}
+$('send').onclick=send;
+$('inp').addEventListener('keydown',e=>{
+ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+async function loadSettings(){
+ const r=await fetch('/api/settings');const j=await r.json();
+ $('s-backend').value=j.backend_url;$('s-model').value=j.model;
+ $('s-temp').value=j.temperature;$('s-tokens').value=j.max_tokens;
+ $('s-sys').value=j.system_prompt;
+}
+loadSettings();
+$('save').onclick=async()=>{
+ const body={backend_url:$('s-backend').value,model:$('s-model').value,
+  temperature:parseFloat($('s-temp').value),
+  max_tokens:parseInt($('s-tokens').value),system_prompt:$('s-sys').value};
+ await fetch('/api/settings',{method:'POST',
+  headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ $('saved').textContent='saved';setTimeout(()=>$('saved').textContent='',2500);
+ status();
+};
+</script></body></html>
+"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _json(self, obj, code=200):
+        data = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == "/" or self.path.startswith("/?"):
+            data = PAGE.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path == "/api/status":
+            self._json(get_status())
+        elif self.path == "/api/settings":
+            self._json(load_settings())
+        else:
+            self._json({"error": "not found"}, 404)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            body = json.loads(raw or b"{}")
+        except Exception:
+            body = {}
+        if self.path == "/api/settings":
+            try:
+                self._json(save_settings(body))
+            except Exception as e:
+                self._json({"error": str(e)[:160]}, 400)
+        elif self.path == "/api/chat":
+            self._chat(body)
+        else:
+            self._json({"error": "not found"}, 404)
+
+    def _chat(self, body):
+        msgs = body.get("messages") or []
+        s = load_settings()
+        model, err = resolve_model(s)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        def send(obj):
+            self.wfile.write(("data: " + json.dumps(obj) + "\n\n").encode())
+            self.wfile.flush()
+
+        if err or not model:
+            send({"error": "brain unreachable: %s" % (err or "no model")})
+            return
+        out = []
+        if s.get("system_prompt"):
+            out.append({"role": "system", "content": s["system_prompt"]})
+        out.extend(msgs)
+        payload = {"model": model, "messages": out,
+                   "temperature": float(s["temperature"]),
+                   "max_tokens": int(s["max_tokens"]), "stream": True}
+        req = urllib.request.Request(
+            s["backend_url"].rstrip("/") + "/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=1200) as r:
+                for raw in r:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except Exception:
+                        continue
+                    ch = (chunk.get("choices") or [{}])[0]
+                    delta = ch.get("delta") or {}
+                    if delta.get("content"):
+                        send({"delta": delta["content"]})
+                    elif delta.get("reasoning_content"):
+                        send({"reasoning": delta["reasoning_content"]})
+            send({"done": True})
+        except Exception as e:
+            try:
+                send({"error": str(e)[:200]})
+            except Exception:
+                pass
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=8952)
+    ap.add_argument("--host", default="0.0.0.0")
+    a = ap.parse_args()
+    srv = ThreadingHTTPServer((a.host, a.port), Handler)
+    srv.daemon_threads = True
+    print("qwenputer dashboard on %s:%d" % (a.host, a.port), flush=True)
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

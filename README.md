@@ -68,11 +68,7 @@ single ELF for the stock circuit map — baked-in prompt, exact `store`/`recall`
 `mul` tool returned 123456789 × 987654321 = 121932631112635269 exactly, a product
 no language model does reliably in its head. Getting the agent's long prompt out of
 the guest took a second UART fix — IIR now reports THRE as well as RDA. New tests:
-15 passed. (Direction changed 2026-10-31: the delegation bridge is retired —
-the live terminal runs bridge-free and the system is self-contained, guest
-harness ↔ built-in weights only; the harness is being rebuilt on the Hermes
-CLI/TUI pattern rather than the gadget pattern. The operands in `agent.c`
-are now 123456 × 654321 — see `docs/linux.md` for the measured reason.)
+15 passed.
 
 **Now preconfigured and fast.** The harness's seat is pinned to the **built-in
 weights, Qwen 3.5 4B** (see above) — and with that brain the live proofs pass
@@ -87,27 +83,23 @@ byte-identical consoles, and hash identically over the full machine state
 a boot in about a third of a second, agent tests in seconds. Alongside it,
 **snapshots** (`snapshot.py`): prime a logged-in, tools-installed shell once and
 later runs restore straight to it. The live terminal
-(`liveterm.py --fast`, default backend `builtin`) now serves the whole
+(`liveterm.py --fast --bridge`, default backend `builtin`) now serves the whole
 stack. The Python machine remains the oracle every fast path is checked against.
 
-**And now, on the circuit itself.** The bare-metal harness runs on the compiled
-chip layers — the CPU inside the weights — driven by
-`chipformer/rv/circuitagent.py` through the `fastexec` executor: the circuit is
-seeded from the ELF, each generated token is one instruction the circuit
-computes, and the mailbox is serviced by reading and writing the executor's
-memory state directly (the guest binary and protocol do not change). Verified
-against the reference machine first (`fastexec.check`, exact; a 600-token free
-run matching token for token), then run live with the built-in weights in the
-seat: **PASS** — 82,122 tokens, three mailbox rounds, the guest's own guards
-(one-call-per-reply, repeat detection) firing in-circuit, final answer verified
-in Python (`boot-logs/circuit-stock-builtin.out`). The agent also rebuilds for
-the **grown circuit** — RAM 32 KB → 2 MB, mailbox 896 → 8,192 bytes
-(`env/rom-big.ld`) — on the recompiled graph the Doom port proved. Findings,
-including this brain's simulate-ahead habit and the reasoning loop the old
-9-digit task triggered, are in `docs/linux.md`. Still not done: the Linux-ISA
-circuit port (atomics, CSRs, traps), so *Linux itself* still runs on the
-machines the circuit is verified against — the bare-metal system is what lives
-in the weights today, the same way upstream's C and MicroPython do.
+**The dashboard.** [`chipformer/rv/dashboard.py`](experimental/riscv/chipformer/rv/dashboard.py)
+is the interaction interface: one stdlib-only page with Overview (seat model,
+circuit verdicts, live), Chat (streaming, straight to the built-in-weights
+seat), Terminal (the live guest terminal, embedded untouched), a Desktop
+placeholder (the framebuffer spike — the Doom live view proved the display
+path), links to the machine's other programs, and Settings (seat endpoint,
+model, temperature, token budget, system prompt). It resolves the seat by
+the builtin rule and never loads a model.
+
+Not yet done:
+the final phase — porting these enhancements into the compiled in-weights circuit
+itself, so Linux runs inside the model the way C and MicroPython already do. That port
+is specified in the design doc; until it lands, Linux here runs on the reference machine
+the circuit is verified against, not purely in the weights.
 
 ---
 

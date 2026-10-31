@@ -223,6 +223,20 @@ This fork now has the Doom port's medicine, transplanted:
   (`--snapshot shell.snap` in the tests; `liveterm --snapshot`).
   The snapshot agent test passes against the live model.
 
+### The dashboard
+
+`chipformer/rv/dashboard.py` is a stdlib-only host server (default
+port 8952) and the human interface to the whole stack: Overview,
+Chat, Terminal, Desktop, Apps and Settings tabs in one page. Chat
+streams (SSE) from the seat resolved by the builtin rule; Settings
+can pin the endpoint, model, temperature, token budget and system
+prompt, persisted to `dash-settings.json` beside the rig. Overview
+reads the circuit runs' own logs, so verdicts shown are the runs'
+verdicts. The Terminal tab embeds the live terminal untouched; the
+Desktop tab marks the framebuffer spike the Doom live view
+prototyped (guest draws in its memory, host shows it, input goes
+back).
+
 ### Running it on the circuit itself
 
 Everything above runs the guest on a host-side machine (reference or
