@@ -140,11 +140,12 @@ class MachineThread(threading.Thread):
                 if b"CANARY_42" in out:
                     pending = bytearray(install)
                     self.phase = 2
-                elif len(out) > self.seen_len and steps - self.phase_steps >= 500_000:
-                    # output grew: someone logged in (or is trying). Probe
-                    # for a live shell; a canary typed at the login prompt
-                    # just fails as a username and the prompt returns.
-                    self.seen_len = len(out)
+                elif (b"login on" in out or b"~ #" in out) \
+                        and steps - self.phase_steps >= 500_000:
+                    # evidence of a completed login (the login banner or a
+                    # shell prompt). Only NOW probe for the shell - a canary
+                    # typed at the login prompt would be eaten as a username
+                    # and wedge the session at a Password: prompt.
                     self.phase_steps = steps
                     self.feed(b"echo CANARY_$((40+2))\n")
             elif self.phase == 2 and pending:
