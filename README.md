@@ -21,21 +21,35 @@ the machine Linux needs around it, following the proven
 - **A Linux machine**: 64 MiB RAM at `0x80000000`, an 8250 UART at `0x10000000`, a CLINT
   (msip/mtimecmp/mtime) at `0x11000000`, SYSCON poweroff/reboot, and a device tree describing
   exactly that.
+- **A Qwen coprocessor the guest can talk to**: an MMIO window at `0x10010000`
+  (DATA/STATUS/CTRL) plus a console line protocol — the guest prints a line starting with
+  `QWEN:`, the host-side language model answers, and the answer is typed back into the
+  terminal for the guest to read. From the guest shell: `ask "your question"`. The backend
+  is a pluggable `str -> str` callable; today it's the model already loaded in LM Studio
+  (auto-detected, never loads one) — the seat the Qwenputer checkpoint's own language
+  layers take when the circuit port lands.
 
 Code: [`experimental/riscv/chipformer/rv/linux.py`](experimental/riscv/chipformer/rv/linux.py)
 (the machine), [`experimental/riscv/chipformer/rv/linuxboot.py`](experimental/riscv/chipformer/rv/linuxboot.py)
-(the boot runner), tests in
+(the boot runner), [`experimental/riscv/chipformer/rv/qwenbackend.py`](experimental/riscv/chipformer/rv/qwenbackend.py)
+(backends), [`experimental/riscv/chipformer/rv/qwentest.py`](experimental/riscv/chipformer/rv/qwentest.py)
+(the automated round-trip proof), [`experimental/riscv/chipformer/rv/liveterm.py`](experimental/riscv/chipformer/rv/liveterm.py)
+(a live terminal in your browser), tests in
 [`experimental/riscv/tests/test_rv_linux.py`](experimental/riscv/tests/test_rv_linux.py), and the
 full design in [`experimental/riscv/docs/linux.md`](experimental/riscv/docs/linux.md).
 
 **Status, honestly:** a prebuilt Linux 6.1.14 image (kernel + Buildroot initramfs from
-mini-rv32ima-images) boots on this fork's enhanced reference machine through the end of kernel
-init — `Run /init as init process` — and reaches the **Buildroot login prompt**. New tests:
-10 passed; upstream's suite still passes (130 passed, 4 skipped). Not yet done: logging in for an
-interactive shell, and the final phase — porting these enhancements into the compiled in-weights
-circuit itself, so Linux runs inside the model the way C and MicroPython already do. That port is
-specified in the design doc; until it lands, Linux here runs on the reference machine the circuit
-is verified against, not purely in the weights.
+mini-rv32ima-images) boots on this fork's enhanced reference machine, and since
+2026-10-31 the **interactive shell works** (log in as `root`, no password) — getting
+there took fixing the UART's interrupt-status register, which had starved console input
+completely. The guest can also **ask the model a question and print its answer**:
+`/tmp/ask "what is the capital of France"` → `The capital of France is **Paris**.`,
+verified end-to-end by `qwentest.py` against both a deterministic echo backend and a
+real LM Studio model (transcripts in `boot-logs/`). New tests: 15 passed. Not yet done:
+the final phase — porting these enhancements into the compiled in-weights circuit
+itself, so Linux runs inside the model the way C and MicroPython already do. That port
+is specified in the design doc; until it lands, Linux here runs on the reference machine
+the circuit is verified against, not purely in the weights.
 
 ---
 
@@ -62,8 +76,10 @@ This fork enhances it into a **Linux-capable machine** and boots a real kernel o
 - **Machine:** 64 MiB of RAM at `0x80000000`, a CLINT timer at `0x11000000`, an 8250 UART at
   `0x10000000`, SYSCON poweroff/reboot.
 - **Result:** Linux **6.1.14** (nommu, Buildroot + busybox initramfs) boots on the reference
-  machine to a **Buildroot login prompt** — kernel init completes in ~28M instructions with
-  zero trap warnings. The enhanced machine is `experimental/riscv/chipformer/rv/linux.py`,
+  machine to a **working interactive shell** — kernel init completes in ~28M instructions,
+  login (root, no password) and a full shell session are verified, and the guest can query
+  the host-side language model through the Qwen coprocessor (`ask "..."`, see the fork
+  section at the top). The enhanced machine is `experimental/riscv/chipformer/rv/linux.py`,
   the boot runner is `linuxboot.py`, unit tests for every new piece are in
   `tests/test_rv_linux.py`, and the full design + gap analysis is in
   [`experimental/riscv/docs/linux.md`](experimental/riscv/docs/linux.md).
