@@ -80,6 +80,11 @@ CNLohr) — it describes exactly the machine above.
 
 ## Honesty box
 
+- **Verified 2026-10-30:** the prebuilt Linux 6.1.14 image boots on this
+  fork's reference machine through the end of kernel init
+  (`Run /init as init process`) and reaches the **Buildroot login prompt**
+  (90.2M steps, clean log, no trap dumps). An interactive login/shell
+  session has not been verified yet.
 - Linux booting on the **reference machine** = the design is right and the
   kernel agrees. That is what step 3 proves.
 - Linux booting **purely in the weights** additionally needs the step-4

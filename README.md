@@ -6,6 +6,39 @@ Qwenputer model: [Hugging Face](https://huggingface.co/divagr1925/Qwen3.5-4B-Qwe
 Filesystem model: [Hugging Face](https://huggingface.co/divagr1925/Qwen3.5-4B-Qwenputer-Filesystem) · [ModelScope](https://www.modelscope.ai/models/Spartan1925/Qwen3.5-4B-Qwenputer-Filesystem)  
 NPU model: [Hugging Face](https://huggingface.co/divagr1925/Qwenputer-npu) · [ModelScope](https://www.modelscope.ai/models/Spartan1925/Qwenputer-npu)
 
+## This fork: Linux on Qwenputer (`qwenputer-linux`)
+
+Upstream Qwenputer's CPU is **RV32IM**: no atomics, read-only stub CSRs, and faults that halt the
+machine. That runs C and MicroPython, but it can't run Linux. This fork enhances the CPU and builds
+the machine Linux needs around it, following the proven
+[mini-rv32ima](https://github.com/cnlohr/mini-rv32ima) spec (CNLohr, MIT):
+
+- **CPU: RV32IMA + Zicsr + Zifencei** — the full A extension (AMO ops + LR/SC) on top of upstream's
+  RV32IM + Zba + bignum coprocessor.
+- **Real, writable CSRs and traps that return** — `mstatus`/`mie`/`mtvec`/`mepc`/`mcause`/`mtval`
+  and friends, M/U privilege modes, `mret`, and timer interrupts. Unknown CSRs read as 0, ignore
+  writes, and are counted — a visible trap-and-emulate seam for the next phase.
+- **A Linux machine**: 64 MiB RAM at `0x80000000`, an 8250 UART at `0x10000000`, a CLINT
+  (msip/mtimecmp/mtime) at `0x11000000`, SYSCON poweroff/reboot, and a device tree describing
+  exactly that.
+
+Code: [`experimental/riscv/chipformer/rv/linux.py`](experimental/riscv/chipformer/rv/linux.py)
+(the machine), [`experimental/riscv/chipformer/rv/linuxboot.py`](experimental/riscv/chipformer/rv/linuxboot.py)
+(the boot runner), tests in
+[`experimental/riscv/tests/test_rv_linux.py`](experimental/riscv/tests/test_rv_linux.py), and the
+full design in [`experimental/riscv/docs/linux.md`](experimental/riscv/docs/linux.md).
+
+**Status, honestly:** a prebuilt Linux 6.1.14 image (kernel + Buildroot initramfs from
+mini-rv32ima-images) boots on this fork's enhanced reference machine through the end of kernel
+init — `Run /init as init process` — and reaches the **Buildroot login prompt**. New tests:
+10 passed; upstream's suite still passes (130 passed, 4 skipped). Not yet done: logging in for an
+interactive shell, and the final phase — porting these enhancements into the compiled in-weights
+circuit itself, so Linux runs inside the model the way C and MicroPython already do. That port is
+specified in the design doc; until it lands, Linux here runs on the reference machine the circuit
+is verified against, not purely in the weights.
+
+---
+
 **Qwenputer is a new kind of experimental model: Qwen3.5-4B with a 32-bit RISC-V CPU compiled and
 inserted directly into its weights.** It isn't a plugin, a tool or a sandbox. The CPU is 11
 transformer layers in front of Qwen's own, and none of their weights are learned: a compiler
@@ -17,6 +50,31 @@ cell. The CPU keeps its code, data, registers and program counter there.
 
 The CPU runs C and MicroPython code inside the model's forward passes, and passes the official
 riscv-tests suites.
+
+## Linux on the computer (this fork)
+
+Upstream's CPU is a bare-metal RV32IM: no atomics, read-only stub CSRs, and faults that halt.
+This fork enhances it into a **Linux-capable machine** and boots a real kernel on it:
+
+- **CPU:** RV32IM → **RV32IMA + Zicsr** — the A extension (AMO + LR/SC), a real writable CSR
+  file, M/U privilege, trap entry and `mret` (timer interrupts, `ecall` from userspace,
+  misaligned fixups), on the proven [mini-rv32ima](https://github.com/cnlohr/mini-rv32ima) spec.
+- **Machine:** 64 MiB of RAM at `0x80000000`, a CLINT timer at `0x11000000`, an 8250 UART at
+  `0x10000000`, SYSCON poweroff/reboot.
+- **Result:** Linux **6.1.14** (nommu, Buildroot + busybox initramfs) boots on the reference
+  machine to a **Buildroot login prompt** — kernel init completes in ~28M instructions with
+  zero trap warnings. The enhanced machine is `experimental/riscv/chipformer/rv/linux.py`,
+  the boot runner is `linuxboot.py`, unit tests for every new piece are in
+  `tests/test_rv_linux.py`, and the full design + gap analysis is in
+  [`experimental/riscv/docs/linux.md`](experimental/riscv/docs/linux.md).
+- **Honest status:** Linux is proven on the reference machine, which is the exact target the
+  in-weights circuit is checked against. Porting the new pieces (AMO datapath, CSR file,
+  resumable traps) into the compiled transformer circuit is the next phase, spec'd in the
+  design doc — nothing here claims the weights boot Linux until the circuit replays the
+  same boot trace exactly.
+
+Based on [divagr18/qwenputer](https://github.com/divagr18/qwenputer) (MIT); the Linux machine
+spec and DTB come from CNLohr's mini-rv32ima (MIT).
 
 <p align="center"><img src="docs/benchmarks-arith.png" alt="Qwenputer vs base Qwen3.5-4B and base with a Python tool on NUPA and DeepMind arithmetic sets." width="100%"></p>
 
