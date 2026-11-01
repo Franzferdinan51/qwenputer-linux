@@ -220,9 +220,24 @@ def _guest_task(task, send):
     try:
         with urllib.request.urlopen(base + "/api/out?since=0",
                                     timeout=10) as r:
-            mark = json.loads(r.read())["until"]
+            snap = json.loads(r.read())
+            mark = snap["until"]
     except Exception:
         return None
+    # Readiness gate (2026-10-31, Duckets' "chat sits working while
+    # the brain runs" report): delegate ONLY when the terminal is
+    # actually sitting at the agentshell prompt. Typing a job into
+    # a console that is still installing, mid-session, or at a
+    # plain shell queues it behind whatever owns the console and
+    # the chat then waits the full deadline while the brain burns
+    # further rounds - the exact stuck-working disconnect. When
+    # the computer is not at its prompt, say so at once.
+    tail = snap["data"][-400:]
+    if "ASK_READY" not in snap["data"] or \
+            not tail.rstrip().endswith("agent>"):
+        return ("(the computer is busy right now - it is starting "
+                "up or in the middle of something else, so the job "
+                "was not handed over)")
     line = 'hermes-agent "' + task.replace('"', "'") + '"\n'
     try:
         req = urllib.request.Request(
@@ -231,7 +246,7 @@ def _guest_task(task, send):
         urllib.request.urlopen(req, timeout=10).read()
     except Exception:
         return None
-    deadline = time.time() + 300
+    deadline = time.time() + 120
     waited = 0
     while time.time() < deadline:
         time.sleep(3)
@@ -249,7 +264,7 @@ def _guest_task(task, send):
             ans = data[idx + len("\nAGENT_ANSWER:"):].split("\n")[0].strip()
             if ans:
                 return ans
-    return "(the computer did not answer within 5 minutes)"
+    return "(the computer did not answer within 2 minutes)"
 
 
 def get_activity():
@@ -508,7 +523,7 @@ async function send(){
   const r=await fetch('/api/chat',{method:'POST',signal:AC.signal,
    headers:{'Content-Type':'application/json'},
    body:JSON.stringify({messages:hist})});
-  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';let fin=false;
   while(true){const{value,done}=await rd.read();if(done)break;
    buf+=dec.decode(value,{stream:true});
    let i;while((i=buf.indexOf('\n\n'))>=0){
@@ -523,8 +538,10 @@ async function send(){
     if(j.retract){content='';body.textContent='';}
     if(j.status){$('chatstat').textContent=j.status;
      if(window.vizPulse)vizPulse(6,true);}
+    if(j.done){fin=true;}
     $('msgs').scrollTop=1e9;
-   }}
+   }
+   if(fin){try{await rd.cancel();}catch(e){}break;}
  }catch(e){if(e.name!=='AbortError')body.textContent='[connection error] '+e;
   else if(!content)body.textContent='(stopped)';}
  clearInterval(iv);
@@ -708,17 +725,20 @@ class Handler(BaseHTTPRequestHandler):
             seen_tasks = set()
             for _round in range(4):
                 content = self._stream_round(out, s, model, send)
+                # Delegation fires ONLY when the reply LEADS with
+                # the TASK: line, the way the model is taught. An
+                # earlier build scanned for TASK: anywhere in the
+                # text; the model also MENTIONS the mechanism when
+                # explaining itself ("just ask! TASK: ..."), and
+                # each mention silently retracted the user's answer
+                # and burned a guest wait + more generation rounds
+                # - Duckets' "chat sits working while the brain
+                # runs" report, 2026-10-31. A mention is prose, not
+                # a handover.
                 task = None
-                for ln in content.splitlines():
-                    # TASK: may be embedded in a prose sentence, not
-                    # only at line start (seen live 2026-10-31: "just
-                    # ask! TASK: write file ... and tell me what it
-                    # says" followed by an invented result). The job
-                    # is the text from TASK: to the end of the line.
-                    i = ln.find("TASK:")
-                    if i >= 0:
-                        task = ln[i + 5:].strip()
-                        break
+                lead = content.strip()
+                if lead.startswith("TASK:"):
+                    task = lead.splitlines()[0][5:].strip()
                 if not task:
                     break
                 if _round == 3 or task.lower() in seen_tasks:
@@ -759,6 +779,9 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         finally:
             _CHAT_OPEN[0] -= 1
+            # the page ends its "working" state when the stream
+            # closes; say so explicitly at the socket level too
+            self.close_connection = True
 
     def _stream_round(self, out, s, model, send):
         """One streamed completion over the message list; returns the

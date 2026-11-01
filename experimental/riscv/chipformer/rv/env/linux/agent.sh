@@ -122,7 +122,7 @@ while [ $round -lt 9 ]; do
   # conversation in a single line (a glued "; SAY:" tail, a second
   # TOOL call, an invented RESULT). Cut everything from the first
   # simulated continuation on - only the first verb is real.
-  ans=$(printf '%s' "$ans" | sed -e 's/; *SAY:.*//' -e 's/; *RESULT:.*//' -e 's/; *TOOL .*//' -e 's/\. *TOOL .*//' -e 's/\. *SAY:.*//' -e 's/ TOOL run .*//' -e 's/ SAY: .*//' -e 's/ then SAY:.*//' -e 's/ then TOOL .*//')
+  ans=$(printf '%s' "$ans" | sed -e 's/; *SAY:.*//' -e 's/; *RESULT:.*//' -e 's/; *TOOL .*//' -e 's/\. *TOOL .*//' -e 's/\. *SAY:.*//' -e 's/ TOOL run .*//' -e 's/ SAY: .*//' -e 's/ then SAY:.*//' -e 's/ then TOOL .*//' -e 's/ and after .*//' -e 's/ then .*//' -e 's/ and cat .*//')
   # a bare empty reply (the fast core delivers it unadorned) must take
   # the same nudge-and-escalate path as a device notice - left alone
   # it would fall into the catch-all and be delivered as an (empty)
