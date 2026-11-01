@@ -206,3 +206,62 @@ def test_dashboard_page_keeps_all_four_rows_and_counters():
     assert "COMPILED CIRCUIT (EXPERIMENT)" in D.PAGE
     assert "guest_hands" in D.PAGE and "guest_dones" in D.PAGE
     assert "vizPulse" in D.PAGE
+
+
+# --- decision model (opt-in sidecar seat, LM Studio by default) ---
+
+def test_decider_defaults_off():
+    assert D.DEFAULTS["decider_enabled"] is False
+    assert D.DEFAULTS["decider_url"].endswith(":1234")
+    assert D.DEFAULTS["decider_model"] == ""
+
+
+def test_decider_off_probes_nothing(monkeypatch):
+    def boom(url, timeout=None):
+        raise AssertionError("must not probe when off")
+    monkeypatch.setattr(D.urllib.request, "urlopen", boom)
+    model, err = D.resolve_decider({"decider_enabled": False})
+    assert model is None and err == "off"
+
+
+def test_decider_enabled_needs_exact_loaded_id(monkeypatch):
+    def fake_urlopen(url, timeout=None):
+        return _FakeResp({"data": [{"id": "liquidai/d1-omni-600m"}]})
+    monkeypatch.setattr(D.urllib.request, "urlopen", fake_urlopen)
+    s = {"decider_enabled": True, "decider_url": "http://127.0.0.1:1234",
+         "decider_model": "liquidai/d1-omni-600m"}
+    model, err = D.resolve_decider(s)
+    assert model == "liquidai/d1-omni-600m" and err is None
+    s["decider_model"] = "something-else"
+    model, err = D.resolve_decider(s)
+    assert model is None and "not loaded" in err
+
+
+def test_decider_enabled_blank_id_is_an_error():
+    model, err = D.resolve_decider(
+        {"decider_enabled": True, "decider_url": "http://127.0.0.1:1",
+         "decider_model": "  "})
+    assert model is None and "no model id" in err
+
+
+def test_decider_unreachable_is_an_error(monkeypatch):
+    def fake_urlopen(url, timeout=None):
+        raise OSError("refused")
+    monkeypatch.setattr(D.urllib.request, "urlopen", fake_urlopen)
+    model, err = D.resolve_decider(
+        {"decider_enabled": True, "decider_url": "http://127.0.0.1:1",
+         "decider_model": "liquidai/d1-omni-600m"})
+    assert model is None and "refused" in err
+
+
+def test_save_settings_coerces_decider_enabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(D, "SETTINGS_PATH", str(tmp_path / "s.json"))
+    s = D.save_settings({"decider_enabled": 1})
+    assert s["decider_enabled"] is True
+    assert D.load_settings()["decider_enabled"] is True
+
+
+def test_dashboard_page_has_decider_controls():
+    for cid in ("s-decider", "s-deciderurl", "s-decidermodel",
+                "testdecider", "deciderstat"):
+        assert ('id="%s"' % cid) in D.PAGE, cid

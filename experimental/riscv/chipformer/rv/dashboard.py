@@ -66,6 +66,9 @@ DEFAULTS = {
     "max_tokens": 4096,
     "guest_enabled": True,
     "guest_budget": 600,
+    "decider_enabled": False,
+    "decider_url": "http://127.0.0.1:1234",
+    "decider_model": "",
     "system_prompt": (
         "WHO YOU ARE. You are the brain of Qwenputer-Linux. A "
         "real RISC-V Linux computer is compiled into your own "
@@ -117,6 +120,7 @@ def save_settings(new):
     s["max_tokens"] = int(s["max_tokens"])
     s["guest_enabled"] = bool(s.get("guest_enabled", True))
     s["guest_budget"] = max(60, min(3600, int(s.get("guest_budget", 600))))
+    s["decider_enabled"] = bool(s.get("decider_enabled", False))
     with open(SETTINGS_PATH, "w") as f:
         json.dump(s, f, indent=1)
     return s
@@ -153,6 +157,29 @@ def resolve_model(s):
         family, ", ".join(ids)[:120])
 
 
+def resolve_decider(s):
+    """Opt-in fast decision model (a sidecar seat, e.g. a d1 build
+    served by LM Studio). Off by default so fused/GGUF single-model
+    setups never depend on it; when off, no probe runs at all. When
+    on, the id must be exact and loaded - never a silent fallback."""
+    if not s.get("decider_enabled"):
+        return None, "off"
+    want = (s.get("decider_model") or "").strip()
+    if not want:
+        return None, "enabled but no model id set"
+    try:
+        url = s["decider_url"].rstrip("/") + "/v1/models"
+        with urllib.request.urlopen(url, timeout=5) as r:
+            ids = [d.get("id") for d in json.load(r).get("data", [])
+                   if d.get("id")]
+    except Exception as e:
+        return None, str(e)[:160]
+    if want in ids:
+        return want, None
+    return None, "model %r is not loaded (have: %s)" % (
+        want, ", ".join(ids)[:120])
+
+
 def tail(path, n=6000):
     try:
         with open(path, "rb") as f:
@@ -184,6 +211,7 @@ def proc_running(pat):
 def get_status():
     s = load_settings()
     model, err = resolve_model(s)
+    dmodel, derr = resolve_decider(s)
     stock_out = tail(os.path.expanduser(
         "~/qwenputer-test/circuit-stock-builtin.log"))
     grown_log = tail(os.path.expanduser(
@@ -195,6 +223,9 @@ def get_status():
         "uptime_s": int(time.time() - START),
         "version": VERSION,
         "seat": {"model": model, "backend": s["backend_url"], "error": err},
+        "decider": {"enabled": bool(s.get("decider_enabled")),
+                    "model": dmodel, "backend": s["decider_url"],
+                    "error": derr},
         "stock": {"pass": "CIRCUIT AGENT: PASS" in stock_out},
         "grown": {
             "running": proc_running("circuitagent agent-big"),
@@ -1117,10 +1148,21 @@ guest CPU/RAM from its <code>/proc</code> &mdash; never the host.
 <label style="margin-top:16px"><input type="checkbox" id="s-guest" style="width:auto;margin-right:8px">let chat hand jobs to the guest computer</label>
 <label>guest wait budget, seconds (60&ndash;3600 &mdash; how long one delegation may queue + work)</label>
 <input type="number" id="s-budget" step="60" min="60" max="3600">
+<h3 style="font-size:14px;letter-spacing:.05em;color:var(--acc);margin-top:20px">DECISION MODEL (OPTIONAL)</h3>
+<label><input type="checkbox" id="s-decider" style="width:auto;margin-right:8px">enable a fast decision-model sidecar</label>
+<label>decision model URL (LM Studio serves here by default &mdash; same address as the seat is fine)</label>
+<input type="text" id="s-deciderurl">
+<label>decision model id (the exact id loaded there, e.g. liquidai/d1-omni-600m)</label>
+<input type="text" id="s-decidermodel">
+<p class="dim">leave this off for fused/GGUF single-model setups: with no
+sidecar running, enabling it only produces errors. nothing uses the
+decider yet &mdash; this setting just verifies it is reachable.</p>
 <p><button class="act" id="save" style="padding:10px 22px">Save settings</button>
 <button class="ghost" id="testbe">Test backend</button>
+<button class="ghost" id="testdecider">Test decider</button>
 <span id="saved" style="color:var(--ok)"></span></p>
 <p class="dim" id="resolved"></p>
+<p class="dim" id="deciderstat"></p>
 <h3 style="font-size:14px;letter-spacing:.05em;color:var(--acc);margin-top:20px">MIND &amp; DATA</h3>
 <p><button class="ghost" id="actsnap">Snapshot mind now</button>
 <button class="ghost" id="acttrace">Export traces now</button>
@@ -1249,6 +1291,8 @@ async function status(){
   $('footup').textContent='dashboard up '+hh+'h '+mm+'m';
   $('termstate').textContent=j.terminal_up?'guest terminal is up':'guest terminal is down — start liveterm (:8951)';
   $('resolved').textContent='resolved model: '+(j.seat.model||('unreachable — '+(j.seat.error||'')));
+  const dz=j.decider||{};
+  $('deciderstat').textContent=!dz.enabled?'decision model: off':('decision model: '+(dz.model||('unreachable — '+(dz.error||''))));
  }catch(e){}
 }
 status();setInterval(status,10000);
@@ -1596,6 +1640,9 @@ async function loadSettings(){
  $('s-sys').value=j.system_prompt;
  $('s-guest').checked=j.guest_enabled!==false;
  $('s-budget').value=j.guest_budget==null?600:j.guest_budget;
+ $('s-decider').checked=j.decider_enabled===true;
+ $('s-deciderurl').value=j.decider_url||'';
+ $('s-decidermodel').value=j.decider_model||'';
 }
 loadSettings();
 $('save').onclick=async()=>{
@@ -1603,7 +1650,9 @@ $('save').onclick=async()=>{
   temperature:parseFloat($('s-temp').value),
   max_tokens:parseInt($('s-tokens').value),system_prompt:$('s-sys').value,
   guest_enabled:$('s-guest').checked,
-  guest_budget:parseInt($('s-budget').value)};
+  guest_budget:parseInt($('s-budget').value),
+  decider_enabled:$('s-decider').checked,
+  decider_url:$('s-deciderurl').value,decider_model:$('s-decidermodel').value};
  await fetch('/api/settings',{method:'POST',
   headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
  $('saved').textContent='saved';setTimeout(()=>$('saved').textContent='',2500);
@@ -1613,6 +1662,13 @@ $('testbe').onclick=async()=>{
  $('saved').textContent='testing\u2026';
  try{const r=await fetch('/api/status');const j=await r.json();
   $('saved').textContent=j.seat.model?('ok: '+j.seat.model):('FAILED: '+(j.seat.error||'no model'));
+ }catch(e){$('saved').textContent='FAILED: '+e;}
+ setTimeout(()=>{if($('saved').textContent.startsWith('ok'))$('saved').textContent='';},4000);
+};
+$('testdecider').onclick=async()=>{
+ $('saved').textContent='testing\u2026';
+ try{const r=await fetch('/api/status');const j=await r.json();const d=j.decider||{};
+  $('saved').textContent=d.model?('ok: '+d.model):('decider: '+(!d.enabled?'off':('FAILED: '+(d.error||'no model'))));
  }catch(e){$('saved').textContent='FAILED: '+e;}
  setTimeout(()=>{if($('saved').textContent.startsWith('ok'))$('saved').textContent='';},4000);
 };
