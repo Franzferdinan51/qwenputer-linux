@@ -188,6 +188,21 @@ def test_sysstat_parser_reads_live_shaped_reply():
         raise AssertionError("missing markers must raise")
 
 
+def test_harvest_last_fills_mem_not_cpu():
+    DB._SYS.update({"at": 0, "mem_total_kb": 0, "cpu_pct": None,
+                    "note": "no sample yet"})
+    text = ("QWSYSB\nMemTotal: 62836 kB\nMemAvailable: 54148 kB\n"
+            "cpu  1 0 2 100 0 0 0 0\n0.50 0.1 0.1 1/1 1\nQWSYSE\n")
+    assert DB._harvest_last(text, "stale") is True
+    assert DB._SYS["mem_total_kb"] == 62836
+    assert DB._SYS["load1"] == 0.50
+    assert DB._SYS["cpu_pct"] is None  # needs a fresh delta pair
+    assert DB._SYS["note"] == "stale"
+    assert DB._harvest_last("nothing here", "x") is False
+    DB._SYS.update({"at": 0, "mem_total_kb": 0, "mem_avail_kb": 0,
+                    "load1": None, "note": "no sample yet"})
+
+
 def test_mind_reader_over_fixture_mirror(tmp_path):
     root = tmp_path / "root"
     (root / "nb").mkdir(parents=True)

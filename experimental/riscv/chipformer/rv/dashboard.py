@@ -476,7 +476,8 @@ _SYS_CMD = ("echo QWSYSB; cat /proc/meminfo; echo QWSYSSTAT; "
             "cat /proc/stat; echo QWSYSLOAD; cat /proc/loadavg; echo QWSYSE")
 _SYS = {"at": 0, "mem_total_kb": 0, "mem_avail_kb": 0, "cpu_pct": None,
         "load1": None, "console_bps": 0, "steps": None,
-        "steps_per_s": None, "note": "no sample yet"}
+        "steps_per_s": None, "note": "no sample yet",
+        "last_try": "never"}
 _SYS_LOCK = threading.Lock()
 _SYS_PREV = {"cpu": None, "at": 0, "until": None, "steps": None}
 
@@ -508,16 +509,52 @@ def _parse_sysstat(text):
     return out
 
 
+def _harvest_last(text, note):
+    """Fill mem/load from the newest QWSYS reply already in TEXT.
+
+    Stale-but-real beats "no sample yet": after a restart, or while a
+    long session holds the console, the tab still shows the last known
+    numbers, honestly labeled. CPU% never comes from here (it needs a
+    fresh delta pair, not one old line).
+    """
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    begins = [i for i, l in enumerate(lines) if l.strip() == "QWSYSB"]
+    ends = [i for i, l in enumerate(lines) if l.strip() == "QWSYSE"]
+    pairs = [(b, e) for b in begins for e in ends if e > b]
+    if not pairs:
+        return False
+    b, e = max(pairs)
+    try:
+        p = _parse_sysstat("\n".join(lines[b:e + 1]))
+    except ValueError:
+        return False
+    with _SYS_LOCK:
+        if p["mem_total_kb"]:
+            _SYS["mem_total_kb"] = p["mem_total_kb"]
+            _SYS["mem_avail_kb"] = p["mem_avail_kb"]
+        _SYS["load1"] = p["load1"]
+        if not _SYS["at"]:
+            _SYS["at"] = time.time()
+        _SYS["note"] = note
+    return True
+
+
 def _sys_sample_once(base="http://127.0.0.1:8951"):
+    def ret(s):
+        with _SYS_LOCK:
+            _SYS["last_try"] = s
+        return s
+
     try:
         with urllib.request.urlopen(base + "/api/out?since=0",
                                     timeout=10) as r:
             snap = json.loads(r.read())
     except Exception:
-        return "terminal offline"
+        return ret("terminal offline")
     if "ASK_READY" not in snap["data"] or \
             not snap["data"].rstrip().endswith("agent>"):
-        return "console busy - kept last sample"
+        _harvest_last(snap["data"], "stale - console busy")
+        return ret("console busy - kept last sample")
     mark = snap["until"]
     try:
         req = urllib.request.Request(
@@ -526,7 +563,7 @@ def _sys_sample_once(base="http://127.0.0.1:8951"):
             headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10).read()
     except Exception:
-        return "send failed"
+        return ret("send failed")
     text = ""
     deadline = time.time() + 40
     while time.time() < deadline:
@@ -541,11 +578,11 @@ def _sys_sample_once(base="http://127.0.0.1:8951"):
         if any(l.strip() == "QWSYSE" for l in text.split("\n")):
             break
     else:
-        return "guest never answered"
+        return ret("guest never answered")
     try:
         p = _parse_sysstat(text)
     except ValueError:
-        return "unparseable reply"
+        return ret("unparseable reply")
     now = time.time()
     with _SYS_LOCK:
         if p["mem_total_kb"]:
@@ -567,7 +604,7 @@ def _sys_sample_once(base="http://127.0.0.1:8951"):
         _SYS_PREV["until"] = (mark, now)
         _SYS["at"] = now
         _SYS["note"] = "live from the guest"
-    return "ok"
+    return ret("ok")
 
 
 def _stats_sample_once(base="http://127.0.0.1:8951"):
@@ -588,6 +625,13 @@ def _stats_sample_once(base="http://127.0.0.1:8951"):
 
 
 def _sys_loop():
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8951/api/out?since=0",
+                                    timeout=15) as r:
+            _harvest_last(json.loads(r.read())["data"],
+                          "last console reply")
+    except Exception:
+        pass
     while True:
         try:
             _sys_sample_once()
@@ -1094,9 +1138,12 @@ function md(src){
  let out=esc(src),code=[];
  out=out.replace(/```(\w*)\n([\s\S]*?)```/g,(m,l,c)=>{code.push('<pre><code>'+c+'</code></pre>');return '\u0000'+(code.length-1)+'\u0000';});
  const lines=out.split('\n'),html=[];let list=null;
- const inline=s=>s.replace(/`([^`]+)`/g,'<code>$1</code>')
-  .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
-  .replace(/(^|\W)\*([^*\n]+)\*/g,'$1<em>$2</em>');
+ const inline=s=>{const ic=[];
+  s=s.replace(/`([^`]+)`/g,(m,c)=>{ic.push('<code>'+c+'</code>');return '\u0001'+(ic.length-1)+'\u0001';});
+  s=s.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+   .replace(/(^|\W)\*([^*\n]+)\*/g,'$1<em>$2</em>')
+   .replace(/\[([^\]]+)\]\((https?:[^)\s"']+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return s.replace(/\u0001(\d+)\u0001/g,(m,i)=>ic[+i]);};
  for(const ln of lines){
   let m;
   if(/^\u0000\d+\u0000$/.test(ln)){if(list){html.push('</'+list+'>');list=null;}html.push(code[+ln.slice(1,-1)]);continue;}
@@ -1162,7 +1209,8 @@ async function loadMind(){
    +escH(a.preview||'(no preview)')+'</span><span><code>TOOL skill '+escH(a.name)+'</code></span></div>').join('')
    :card('no skills saved','the agent saves reusable procedures here after hard tasks.');
   $('jobs').innerHTML=j.jobs.length?j.jobs.map(b=>{
-   const due=b.due_in_s>0?('due in '+Math.max(1,Math.round(b.due_in_s/60))+' min'):('due '+Math.round(-b.due_in_s/60)+' min ago — will fire on the next tick');
+   const mins=Math.round(b.due_in_s/60);
+   const due=b.due_in_s>0?('due in '+(mins>2880?Math.round(mins/1440)+'d':(mins>120?Math.round(mins/60)+'h':Math.max(1,mins)+' min'))):('due '+Math.max(1,-mins)+' min ago — will fire on the next tick');
    return '<div class="app"><b>'+escH(b.task)+'</b><span>'+escH(due)+(b.every_min&&+b.every_min>0?(' · repeats every '+b.every_min+' min'):' · one-shot')+'</span><span>last: '+escH(b.last||'never ran')+'</span></div>';}).join('')
    :card('no jobs scheduled','the agent schedules its own cron jobs here — memory upkeep reseeds itself daily.');
  }catch(e){}
@@ -1170,6 +1218,7 @@ async function loadMind(){
 loadMind();$('mindrefresh').onclick=loadMind;
 async function status(){
  try{const r=await fetch('/api/status');const j=await r.json();
+  j.grown=j.grown||{};j.stock=j.stock||{};j.seat=j.seat||{};
   $('seatmodel').textContent=j.seat.model||'unreachable';
   $('seatsub').textContent=j.seat.error?j.seat.error:('via '+j.seat.backend);
   $('ov-model').textContent=j.seat.model||('unreachable: '+(j.seat.error||''));
@@ -1245,7 +1294,8 @@ async function send(){
   else if(!content)body.textContent='(stopped)';}
  clearInterval(iv);
  if(!content&&reasoning){content=reasoning;}
- if(content){body.innerHTML=md(content);hist.push({role:'assistant',content});}
+ if(content){body.innerHTML=md(content);hist.push({role:'assistant',content});
+  if(hist.length>40)hist.splice(0,hist.length-40);}
  const dt=(Date.now()-t0)/1000;
  $('chatstat').textContent='done \u00b7 '+Math.round(dt)+'s \u00b7 '+ntok+
   ' tokens'+(dt>0&&ntok?' \u00b7 '+(ntok/dt).toFixed(1)+' tok/s':'');
@@ -1253,6 +1303,7 @@ async function send(){
  $('inp').focus();
 }
 $('send').onclick=send;
+$('inp').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}};
 $('stop').onclick=()=>{if(AC)AC.abort();};
 $('clear').onclick=()=>{hist.length=0;$('msgs').innerHTML='';
  $('chatstat').textContent='';};
@@ -1416,13 +1467,13 @@ async function sysTick(){
   else{$('t-ram').textContent='\u2026';}
   gauge($('gauge-cpu'),g.cpu_pct);
   gauge($('gauge-ram'),g.mem_total_kb?Math.round((g.mem_total_kb-(g.mem_avail_kb||0))/g.mem_total_kb*100):null);
-  $('sys-load').textContent=g.load1==null?'load: \u2026':('load 1m: '+g.load1);
+  $('sys-load').textContent=g.load1==null?('waiting \u2014 '+(g.last_try||'first sample soon')):('load 1m: '+g.load1);
   $('sys-mem').textContent=g.mem_total_kb?Math.round((g.mem_total_kb-(g.mem_avail_kb||0))/1024)+' of '+Math.round(g.mem_total_kb/1024)+' MB used · guest RAM, not this Mac':'waiting for first sample\u2026';
   $('sys-engine').textContent=(g.steps==null?'engine steps: this liveterm predates /api/stats — live after its next restart':(Number(g.steps).toLocaleString()+' steps retired'+(g.steps_per_s==null?'':' · '+Number(g.steps_per_s).toLocaleString()+'/s')));
   $('sys-console').textContent='console traffic '+(g.console_bps||0)+' B/s · terminal '+(j.terminal_up?'up':'down');
   const gr=j.grown||{},st=j.stock||{};
   $('sys-circuit').textContent='grown: '+(gr.tok_min==null?'\u2026':gr.tok_min+' tok/min')+' · stock: '+(st.tok_min==null?'\u2026':st.tok_min+' tok/min');
-  $('sysage').textContent=g.age_s==null?'(no sample yet)':('(sampled '+g.age_s+'s ago · '+(g.note||'')+')');
+  $('sysage').textContent=g.age_s==null?('(no fresh sample — '+(g.last_try||'warming up')+')'):('(sampled '+g.age_s+'s ago · '+(g.note||'')+')');
   if(g.cpu_pct!=null){cpuHist.push(g.cpu_pct);if(cpuHist.length>60)cpuHist.shift();}
   spark();
  }catch(e){}
@@ -1430,6 +1481,7 @@ async function sysTick(){
 sysTick();
 async function activity(){
  try{const r=await fetch('/api/activity');const j=await r.json();viz.lastAct=j;
+  j.grown=j.grown||{};j.stock=j.stock||{};
   if(++sysTickN%5===0)sysTick();
   const s=j.chat_series,rate=s.slice(20).reduce((a,b)=>a+b,0)/20;
   if(j.chat_open>0&&rate>0)vizPulse(Math.min(3,Math.ceil(rate/6)));
