@@ -81,10 +81,11 @@ def save(m: LinuxMachine, path) -> None:
 def load(path) -> LinuxMachine:
     with open(path, "rb") as fh:
         state = pickle.load(fh)
-    m = LinuxMachine(ram_size=state["ram_size"],
-                     ticks_per_step=state["ticks_per_step"])
+    m = LinuxMachine(ram_size=state.get("ram_size", 64 * 1024 * 1024),
+                     ticks_per_step=state.get("ticks_per_step", 1))
     for f in _FIELDS:
-        setattr(m, f, state[f])
+        if f in state:  # snapshots from older builds may lack new fields
+            setattr(m, f, state[f])
     m.ram = bytearray(state["ram"])
     m.out = bytearray()  # fresh stream for the restoring driver
     return m

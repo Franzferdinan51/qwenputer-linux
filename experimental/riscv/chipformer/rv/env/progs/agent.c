@@ -67,14 +67,20 @@ static const char *kv_get(const char *key) {
 }
 
 static void kv_put(const char *key, const char *val) {
+    /* strncpy leaves the destination unterminated when the source is
+     * longer than the buffer - and the value is model-controlled text
+     * of mailbox length, so terminate explicitly every time */
     for (int i = 0; i < kv_n; i++)
         if (strcmp(kv_key[i], key) == 0) {
             strncpy(kv_val[i], val, sizeof(kv_val[i]) - 1);
+            kv_val[i][sizeof(kv_val[i]) - 1] = 0;
             return;
         }
     if (kv_n < 4) {
         strncpy(kv_key[kv_n], key, sizeof(kv_key[0]) - 1);
+        kv_key[kv_n][sizeof(kv_key[0]) - 1] = 0;
         strncpy(kv_val[kv_n], val, sizeof(kv_val[0]) - 1);
+        kv_val[kv_n][sizeof(kv_val[0]) - 1] = 0;
         kv_n++;
     }
 }
@@ -213,7 +219,9 @@ int main(void) {
             printf("[agent] ran: TOOL %s\n", call);
             printf("[agent] result: %s\n", r);
             strncpy(prev_call, call, sizeof(prev_call) - 1);
+            prev_call[sizeof(prev_call) - 1] = 0;
             strncpy(prev_result, r, sizeof(prev_result) - 1);
+            prev_result[sizeof(prev_result) - 1] = 0;
             result = prev_result;
             continue;
         }

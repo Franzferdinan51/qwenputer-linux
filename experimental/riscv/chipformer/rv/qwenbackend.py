@@ -39,6 +39,7 @@ def lmstudio_backend(base_url: str | None = None, proxy: str | None = None,
     the VM the tailnet route is the :3130 variant of HTTPS_PROXY.
     model: pin an exact model id (or env QWEN_MODEL); without a pin the
     first listed model is used (the original auto-detect behavior).
+    A pin of "auto" (the dashboard's word) also means unpinned.
     """
     base = (base_url or os.environ.get("QWEN_LM_URL")
             or "http://127.0.0.1:1234").rstrip("/")
@@ -52,25 +53,41 @@ def lmstudio_backend(base_url: str | None = None, proxy: str | None = None,
             base + path,
             data=json.dumps(payload).encode() if payload is not None else None,
             headers={"Content-Type": "application/json"})
-        with opener.open(req, timeout=timeout) as r:
-            return json.loads(r.read())
+        try:
+            with opener.open(req, timeout=timeout) as r:
+                return json.loads(r.read())
+        except Exception as e:
+            raise RuntimeError(f"LM Studio request to {base}{path} failed: {e}")
 
-    models = call("/v1/models", timeout=15).get("data") or []
-    if not models:
+    ids = [m.get("id") for m in (call("/v1/models", timeout=15).get("data") or [])
+           if m.get("id")]
+    if not ids:
         raise RuntimeError(f"no model loaded in LM Studio at {base}")
-    model = model or os.environ.get("QWEN_MODEL") or models[0]["id"]
-    if model not in [m["id"] for m in models]:
+    pin = model or os.environ.get("QWEN_MODEL")
+    if pin == "auto":  # the dashboard's word for "unpinned", not a model id
+        pin = None
+    model = pin or ids[0]
+    if model not in ids:
         raise RuntimeError(f"pinned model {model!r} is not available in "
-                           f"LM Studio at {base}")
+                           f"LM Studio at {base} (have: {', '.join(ids)})")
+    try:
+        temperature = float(os.environ.get("QWEN_TEMP", "0.7"))
+        max_tokens = int(os.environ.get("QWEN_MAX_TOKENS", "220"))
+    except ValueError as e:
+        raise RuntimeError(f"bad QWEN_TEMP/QWEN_MAX_TOKENS in the environment: {e}")
 
     def ask(prompt: str) -> str:
         out = call("/v1/chat/completions", {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": float(os.environ.get("QWEN_TEMP", "0.7")),
-            "max_tokens": int(os.environ.get("QWEN_MAX_TOKENS", "220")),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
         }, timeout=600)
-        content = out["choices"][0]["message"].get("content") or ""
+        try:
+            content = out["choices"][0]["message"].get("content") or ""
+        except (KeyError, IndexError, TypeError, AttributeError):
+            raise RuntimeError(f"unexpected chat response from {model!r} at "
+                               f"{base}: {str(out)[:200]!r}")
         return content.strip() or "[qwen: empty answer]"
 
     ask.model = model  # for the runner's log line
@@ -100,13 +117,18 @@ def builtin_backend(base_url: str | None = None, proxy: str | None = None):
         urllib.request.ProxyHandler({"http": proxy, "https": proxy})
         if proxy else urllib.request.ProxyHandler({}))
     req = urllib.request.Request(base + "/v1/models")
-    with opener.open(req, timeout=15) as r:
-        ids = [m["id"] for m in (json.loads(r.read()).get("data") or [])]
+    try:
+        with opener.open(req, timeout=15) as r:
+            data = json.loads(r.read()).get("data") or []
+    except Exception as e:
+        raise RuntimeError(f"LM Studio request to {base}/v1/models failed: {e}")
+    ids = [m.get("id") for m in data if m.get("id")]
     fam = [i for i in ids if BUILTIN_FAMILY in i.lower()]
     if not fam:
         raise RuntimeError(
             f"the built-in weights ({BUILTIN_FAMILY}) are not available in "
-            f"LM Studio at {base}; load a Qwen 3.5 4B build first")
+            f"LM Studio at {base} (have: {', '.join(ids) or 'no models'}); "
+            f"load a Qwen 3.5 4B build first")
     fam.sort(key=lambda i: ("3d-coder" in i.lower(), i))
     return lmstudio_backend(base_url, proxy, model=fam[0])
 

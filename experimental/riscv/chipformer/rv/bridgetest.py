@@ -196,7 +196,10 @@ def main() -> int:
                   f"{m.steps / max(time.time() - t0, 1e-9):,.0f} steps/s]", flush=True)
 
     out = bytes(m.out)
-    delegated = b"[ask] hermes-agent reported:" in out
+    # line-start anchor: the install heredoc's echo of ask.sh itself
+    # contains "[ask] hermes-agent reported:" mid-line and must not
+    # count as a real delegation
+    delegated = b"\n[ask] hermes-agent reported:" in out
     qa = [l for l in out.split(b"\n") if l.startswith(b"QWEN_ANSWER:")]
     answer_ok = bool(qa) and b"banana" in qa[-1]
     file_ok = b"b   a   n   a   n   a" in out

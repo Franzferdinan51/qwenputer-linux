@@ -145,14 +145,14 @@ def main() -> int:
                 logf.write(bytes([p]))
                 logf.flush()
         if toks % 256 == 0 and ram.read_word(syms["mb_req"]):
-            n = ram.read_word(syms["mb_outlen"])
+            cap = int(syms.get("mb_size", 896)) - 16
+            n = min(ram.read_word(syms["mb_outlen"]), cap)
             prompt = bytes(ram.read_byte(syms["mb_out"] + i)
                            for i in range(n)).decode("utf-8", "replace")
             prompts.append(prompt)
             print(f"\n[circuitagent: prompt {len(prompts)} ({n} chars) "
                   f"at token {toks}]", flush=True)
             answer = backend(prompt)
-            cap = int(syms.get("mb_size", 896)) - 16
             data = " ".join(str(answer).split())[:cap].encode(
                 "utf-8", "replace")
             for i, b in enumerate(data):

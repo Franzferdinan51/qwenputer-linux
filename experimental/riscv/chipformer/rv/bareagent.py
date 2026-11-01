@@ -1,7 +1,7 @@
 """Run the bare-metal agent harness (env/progs/agent.c) on the reference
 machine and sit in the model's seat: service the RAM mailbox.
 
-    python3 -m chipformer.rv.bareagent agent.elf [--backend lmstudio]
+    python3 -m chipformer.rv.bareagent agent.elf [--backend echo|lmstudio|builtin]
         [--log bare-lm.out]
 
 The guest writes a prompt into mb_out and sets mb_req; this runner reads
@@ -39,7 +39,8 @@ def wr(m, addr, b):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("elf")
-    ap.add_argument("--backend", choices=("echo", "lmstudio"), default="lmstudio")
+    ap.add_argument("--backend", choices=("echo", "lmstudio", "builtin"),
+                    default="lmstudio")
     ap.add_argument("--log", default=None)
     ap.add_argument("--max-tokens", type=int, default=3_000_000)
     args = ap.parse_args()
@@ -55,12 +56,12 @@ def main() -> int:
     while not m.halted and toks < args.max_tokens:
         toks += len(m.run(4000))
         if m.ram[syms["mb_req"] >> 2]:
-            n = m.ram[syms["mb_outlen"] >> 2]
+            cap = int(syms.get("mb_size", 896)) - 16
+            n = min(m.ram[syms["mb_outlen"] >> 2], cap)
             prompt = bytes(rd(m, syms["mb_out"] + i) for i in range(n)).decode(
                 "utf-8", "replace")
             prompts.append(prompt)
             answer = backend(prompt)
-            cap = int(syms.get("mb_size", 896)) - 16
             data = " ".join(str(answer).split())[:cap].encode("utf-8", "replace")
             for i, b in enumerate(data):
                 wr(m, syms["mb_in"] + i, b)

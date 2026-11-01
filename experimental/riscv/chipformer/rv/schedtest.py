@@ -227,7 +227,10 @@ def main() -> int:
         return 1
     tail = out[tail_start:] if tail_start else b""
     answer_seen = b"\nAGENT_ANSWER:" in out
-    fired_seen = b"running scheduled job" in out
+    # line-start anchor: the install heredoc's echo of agentshell.sh
+    # itself contains "running scheduled job" mid-line and must not
+    # count as a job actually firing
+    fired_seen = b"\n[agentshell] running scheduled job" in out
     file_ok = b"m   e   l   o   n" in tail
     # the brain may schedule paraphrase variants of the job, so the
     # honest criteria are about the job that FIRED: it must be logged
@@ -252,7 +255,11 @@ def main() -> int:
     log_part = section(b"JOBSLOG:")
     fired = re.findall(rb"\| job: (.*?) =>", log_part)
     log_ok = bool(fired) and b"melon" in log_part
-    jobs_ok = bool(fired) and all(t.strip() not in jobs_part for t in fired)
+    # compare per job line, not substring: a leftover paraphrase that
+    # merely CONTAINS a fired job's text must not fail the removal check
+    remaining = [ln.split(b"|", 4)[-1].strip()
+                 for ln in jobs_part.split(b"\n") if ln.strip()]
+    jobs_ok = bool(fired) and all(t.strip() not in remaining for t in fired)
     print(f"=== steps={m.steps:,} wall={time.time() - t0:.1f}s "
           f"backend={args.backend} ===")
     ok = answer_seen and fired_seen and file_ok and log_ok and jobs_ok

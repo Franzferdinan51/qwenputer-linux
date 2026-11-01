@@ -26,7 +26,8 @@ def main() -> int:
     ap.add_argument("--slice", type=int, default=250_000)
     ap.add_argument("--type", default="", help=";-separated console commands, typed after boot")
     ap.add_argument("--quiet", action="store_true", help="no progress lines on stderr")
-    ap.add_argument("--qwen", choices=("off", "echo", "lmstudio"), default="echo",
+    ap.add_argument("--qwen", choices=("off", "echo", "lmstudio", "builtin"),
+                    default="echo",
                     help="backend behind the Qwen coprocessor device (guest /tmp/ask)")
     ap.add_argument("--lm-url", default=None,
                     help="LM Studio root for --qwen lmstudio (default: env QWEN_LM_URL or http://127.0.0.1:1234)")

@@ -39,6 +39,7 @@
 # in this file or any install - may approach that limit.
 SYS='Answer with exactly one line, no explanation. Verbs: TOOL run <busybox command> - run a command, you get its output as RESULT. TOOL remember <fact> - keep a fact in your long-term memory. TOOL recall <words> - search your memory, notebook and history. TOOL schedule <minutes> <task> - do a task later; TOOL schedule every <minutes> <task> repeats it. TOOL jobs / TOOL unschedule <n>. TOOL saveskill <name> :: <procedure> - save how to do something, so future you knows; TOOL skill <name> loads one back; check TOOL skills before inventing an approach. TOOL saveapp <name> :: <one-line shell program> - build yourself a small app when you hit a gap (bad at something? make a tool for it once, use it forever); TOOL app <name> <args> runs it; TOOL apps lists them.'
 SYS="$SYS"' SAY: <answer> - finish, and SAY only reports what a RESULT showed you. Claiming is not doing: remembering, saving and building happen ONLY through their TOOL verbs - if you did not send the verb, it did not happen. You have a whole linux system: files persist, agentshell runs your scheduled jobs, your memory is /root/BRAIN.md, notebook /root/nb. Examples - task "multiply 123456789 by 987654321 exactly": TOOL run echo $((123456789 * 987654321)). Task "check the disk every 30 minutes": TOOL schedule every 30 check disk space with df and remember the result. Task "remember my favorite fruit is kiwi": TOOL remember the favorite fruit is kiwi. Task "make /tmp/hi.txt containing hello, then read it back": TOOL run echo hello > /tmp/hi.txt and after the result TOOL run cat /tmp/hi.txt then SAY: what the file says.'
+SYS="$SYS"' Helpers: TOOL run nb add <note> keeps a dated notebook note, TOOL run nb search <words> finds notes back; TOOL run calc <integer expression> does exact arithmetic.'
 
 qwen_ask() {
   # the prompt must go to the CONSOLE, not stdout: this function is called
@@ -60,9 +61,21 @@ qwen_ask() {
 }
 
 deny() {
-  # the safety denylist: whoever asked, these never run
+  # the safety denylist: whoever asked, these never run. The rm rule
+  # fires only when a recursive rm AND a standalone / or /* token are
+  # both present (blanks and ; folded, string padded), so rm -rf
+  # /tmp/x keeps working while any recursive rm aimed at / or /*
+  # never does. (The old substring match blocked every absolute rm -rf
+  # and missed rm -fr entirely.)
+  s=" $(printf '%s' "$1" | tr -s ' \t;' '   ') "
+  case "$s" in
+    *" rm -"[fr]*" "*|*" rm "*"--recursive"*)
+      case "$s" in
+        *" / "*|*" /* "*) return 0 ;;
+      esac ;;
+  esac
   case "$1" in
-    *"rm -rf /"*|*"rm -rf /*"*|*mkfs*|*"dd if="*|*"of=/dev/"*|\
+    *mkfs*|*"dd if="*|*"of=/dev/"*|\
     *shutdown*|*poweroff*|*"reboot"*|*":(){"*|*"chmod -R 777 /"*)
       return 0 ;;
   esac
@@ -73,24 +86,49 @@ result_prompt() {
   prompt="$SYS TASK: $task RESULT: $1 Now reply with EXACTLY ONE line: a TOOL verb or SAY: <final answer>"
 }
 
+clean_name() {
+  # skill/app names come from the model - keep them to one safe path
+  # segment so a ../../.. name can never escape /root/skills or
+  # /root/apps into the rest of the filesystem
+  printf '%s' "$1" | tr -cd 'A-Za-z0-9_-' | head -c 48
+}
+
 task="$*"
 [ -z "$task" ] && { echo 'usage: hermes-agent "your task in quotes"'; echo 'example: hermes-agent "write hello into /tmp/hi.txt"'; exit 1; }
 
 # one agent at a time: the console protocol is a single queue, two
 # loops would interleave prompts and answers into mush. agentd sets
-# AGENTD=1 and defers when busy; a human's run waits a little.
-if ! mkdir /tmp/agent.lockdir 2>/dev/null; then
+# AGENTD=1 and defers when busy; a human's run waits a little. The
+# holder leaves its pid behind so a lock orphaned by kill -9 (no trap)
+# can be taken over instead of wedging every later session.
+takeover_stale() {
+  [ -f /tmp/agent.lockdir/pid ] || return 1
+  p=$(cat /tmp/agent.lockdir/pid 2>/dev/null)
+  case "$p" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$p" 2>/dev/null && return 1
+  rm -rf /tmp/agent.lockdir
+}
+try_lock() {
+  mkdir /tmp/agent.lockdir 2>/dev/null && return 0
+  takeover_stale 2>/dev/null && mkdir /tmp/agent.lockdir 2>/dev/null
+}
+if ! try_lock; then
   if [ -n "$AGENTD" ]; then
     echo "AGENT_BUSY"
     exit 3
   fi
   w=0
+  locked=0
   while [ $w -lt 30 ]; do
     sleep 2; w=$((w + 2))
-    mkdir /tmp/agent.lockdir 2>/dev/null && break
+    if try_lock; then locked=1; break; fi
   done
-  mkdir /tmp/agent.lockdir 2>/dev/null || { echo "AGENT_ANSWER: (the agent is busy with another task - try again shortly)"; exit 1; }
+  if [ $locked -eq 0 ]; then
+    echo "AGENT_ANSWER: (the agent is busy with another task - try again shortly)"
+    exit 1
+  fi
 fi
+echo $$ > /tmp/agent.lockdir/pid
 : > /tmp/agent.runs.$$
 trap 'rm -rf /tmp/agent.lockdir; rm -f /tmp/agent.runs.$$' EXIT INT TERM
 
@@ -108,6 +146,7 @@ prompt="$prompt TASK: $task"
 
 prev_cmd=""
 prev_out=""
+prev_ans=""
 empties=0
 toolcalls=0
 failed=0
@@ -121,8 +160,10 @@ while [ $round -lt 9 ]; do
   # ONE call per reply: the brain likes to simulate the whole
   # conversation in a single line (a glued "; SAY:" tail, a second
   # TOOL call, an invented RESULT). Cut everything from the first
-  # simulated continuation on - only the first verb is real.
-  ans=$(printf '%s' "$ans" | sed -e 's/; *SAY:.*//' -e 's/; *RESULT:.*//' -e 's/; *TOOL .*//' -e 's/\. *TOOL .*//' -e 's/\. *SAY:.*//' -e 's/ TOOL run .*//' -e 's/ SAY: .*//' -e 's/ then SAY:.*//' -e 's/ then TOOL .*//' -e 's/ and after .*//' -e 's/ then .*//' -e 's/ and cat .*//')
+  # simulated continuation on - only the first verb is real. (There is
+  # deliberately no generic "then" cut: it mangled valid shell such as
+  # TOOL run if [ -f f ]; then echo y; fi. "then TOOL/SAY" is covered.)
+  ans=$(printf '%s' "$ans" | sed -e 's/; *SAY:.*//' -e 's/; *RESULT:.*//' -e 's/; *TOOL .*//' -e 's/\. *TOOL .*//' -e 's/\. *SAY:.*//' -e 's/ then SAY:.*//' -e 's/ then TOOL .*//' -e 's/ then RESULT:.*//' -e 's/ and after .*//' -e 's/ and cat .*//' -e 's/ TOOL .*//' -e 's/ RESULT:.*//' -e 's/ SAY:.*//')
   # a bare empty reply (the fast core delivers it unadorned) must take
   # the same nudge-and-escalate path as a device notice - left alone
   # it would fall into the catch-all and be delivered as an (empty)
@@ -149,7 +190,8 @@ while [ $round -lt 9 ]; do
     case "$ans" in
       *"TOOL saveskill "*)
         spec=$(printf '%s' "$ans" | sed 's/.*TOOL saveskill //')
-        name=$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')
+        name=$(clean_name "$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')")
+        [ -z "$name" ] && name=unnamed
         body=$(printf '%s' "$spec" | sed 's/^[^:]*:: *//')
         { echo "# skill: $name"; echo "saved: $(date)"; echo "$body"; } > "/root/skills/$name.md"
         echo "[agent] skill saved: $name" ;;
@@ -211,7 +253,7 @@ while [ $round -lt 9 ]; do
       jtask=$(printf '%s' "$spec" | sed 's/^[^ ]* //' | tr '|' '/' | tr -d '"' | sed 's/^ *//;s/ *$//')
       case "$mins" in ''|*[!0-9]*) mins=1 ;; esac
       njobs=0; [ -f /root/jobs ] && njobs=$(wc -l < /root/jobs)
-      if grep -qF "|$jtask" /root/jobs 2>/dev/null; then
+      if cut -d'|' -f5- /root/jobs 2>/dev/null | grep -qxF "$jtask"; then
         # this brain re-schedules the same job on every RESULT if the
         # harness lets it (8 copies in one session, live 2026-10-31) -
         # a duplicate is a no-op with a clear receipt, not a new job
@@ -243,17 +285,21 @@ while [ $round -lt 9 ]; do
     *"TOOL unschedule "*)
       empties=0
       n=$(printf '%s' "$ans" | sed 's/.*TOOL unschedule //;s/[^0-9].*//')
-      if [ -n "$n" ] && [ -f /root/jobs ]; then
+      nj=0; [ -f /root/jobs ] && nj=$(wc -l < /root/jobs)
+      if [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null && [ "$n" -le "$nj" ]; then
         sed -i "${n}d" /root/jobs
         result_prompt "job $n removed"
+      elif [ -z "$n" ]; then
+        result_prompt "(no job number given - see TOOL jobs)"
       else
-        result_prompt "(no job number given)"
+        result_prompt "(there is no job $n - see TOOL jobs)"
       fi
       ;;
     *"TOOL saveskill "*)
       empties=0
       spec=$(printf '%s' "$ans" | sed 's/.*TOOL saveskill //')
-      name=$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')
+      name=$(clean_name "$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')")
+      [ -z "$name" ] && name=unnamed
       body=$(printf '%s' "$spec" | sed 's/^[^:]*:: *//')
       { echo "# skill: $name"; echo "saved: $(date)"; echo "$body"; } > "/root/skills/$name.md"
       result_prompt "skill '$name' saved - future you can load it with TOOL skill $name"
@@ -261,7 +307,8 @@ while [ $round -lt 9 ]; do
     *"TOOL addskill "*)
       empties=0
       spec=$(printf '%s' "$ans" | sed 's/.*TOOL addskill //')
-      name=$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')
+      name=$(clean_name "$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')")
+      [ -z "$name" ] && name=unnamed
       body=$(printf '%s' "$spec" | sed 's/^[^:]*:: *//')
       echo "$body" >> "/root/skills/$name.md"
       result_prompt "line added to skill '$name'"
@@ -269,7 +316,8 @@ while [ $round -lt 9 ]; do
     *"TOOL fixskill "*)
       empties=0
       spec=$(printf '%s' "$ans" | sed 's/.*TOOL fixskill //')
-      name=$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')
+      name=$(clean_name "$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')")
+      [ -z "$name" ] && name=unnamed
       body=$(printf '%s' "$spec" | sed 's/^[^:]*:: *//')
       echo "CORRECTION $(date): $body" >> "/root/skills/$name.md"
       result_prompt "correction added to skill '$name'"
@@ -286,7 +334,7 @@ while [ $round -lt 9 ]; do
       ;;
     *"TOOL skill "*)
       empties=0
-      name=$(printf '%s' "$ans" | sed 's/.*TOOL skill //;s/ .*//')
+      name=$(clean_name "$(printf '%s' "$ans" | sed 's/.*TOOL skill //;s/ .*//')")
       if [ -f "/root/skills/$name.md" ]; then
         out=$(cat "/root/skills/$name.md" | tr '\n' ' ' | head -c 300)
       else
@@ -297,7 +345,8 @@ while [ $round -lt 9 ]; do
     *"TOOL saveapp "*)
       empties=0
       spec=$(printf '%s' "$ans" | sed 's/.*TOOL saveapp //')
-      name=$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')
+      name=$(clean_name "$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')")
+      [ -z "$name" ] && name=unnamed
       body=$(printf '%s' "$spec" | sed 's/^[^:]*:: *//')
       { echo '#!/bin/sh'; echo "# built by the agent for itself: $(date)"; echo "$body"; } > "/root/apps/$name"
       chmod +x "/root/apps/$name"
@@ -316,10 +365,12 @@ while [ $round -lt 9 ]; do
     *"TOOL app "*)
       empties=0; toolcalls=$((toolcalls + 1))
       spec=$(printf '%s' "$ans" | sed 's/.*TOOL app //')
-      name=$(printf '%s' "$spec" | sed 's/ .*//')
+      name=$(clean_name "$(printf '%s' "$spec" | sed 's/ .*//')")
       args=$(printf '%s' "$spec" | sed 's/^[^ ]* *//')
       if [ -x "/root/apps/$name" ]; then
-        raw=$(eval "\"/root/apps/$name\" $args" 2>&1); st=$?
+        # direct exec, not eval: the args are data, and eval would
+        # re-parse them (a $(...) in args would run as a command)
+        raw=$("/root/apps/$name" $args 2>&1); st=$?
         [ $st -ne 0 ] && failed=1
         out=$(printf '%s' "$raw" | tr '\n' ' ' | head -c 300)
         [ -z "$out" ] && out="(app ran, no output, exit $st)"
@@ -409,3 +460,4 @@ done
 echo "$(date) | $task => (round limit) $prev_out" >> /root/history
 echo "AGENT_ANSWER: (round limit reached) last tool result: $prev_out"
 echo "[agent] stopped: tool round limit (9) reached"
+exit 1

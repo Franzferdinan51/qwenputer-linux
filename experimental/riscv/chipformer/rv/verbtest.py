@@ -198,6 +198,12 @@ def main() -> int:
                 m.feed_input(b"\x03")
                 answers_seen = n_ans
                 task_i += 1
+                # the abandoned session produced no answer, so the
+                # advance branch above will never fire for it - feed the
+                # next task here or every session after a timeout is
+                # silently skipped too
+                if task_i < len(TASKS):
+                    m.feed_input(f"/tmp/hermes-agent '{TASKS[task_i]}'\n".encode())
                 task_slice = slices
         elif phase == 4:
             if b"VERBDONE" in out[dump_mark:]:
@@ -228,12 +234,18 @@ def main() -> int:
     brain_sec = seg(b"BRAINZ:", b"JOBSC:")
     jobs_sec = seg(b"JOBSC:", b"VERBDONE")
     answers = [l for l in out.split(b"\nAGENT_ANSWER:")]
-    apps_ok = b"doubler" in apps_sec and b"42" in out
+    # 42 must be ON an answer line: a bare b"42" in out matches the
+    # CANARY_42 login probe and would pass this check for free
+    apps_ok = b"doubler" in apps_sec and any(
+        b"42" in a.split(b"\n", 1)[0] for a in answers[1:])
     skill_ok = b"hello" in skill_sec
     recall_ok = b"Zorptown" in brain_sec and any(
         b"Zorptown" in a for a in answers[1:])
     unsched_ok = b"\n0" in jobs_sec.replace(b"\r", b"") or jobs_sec.strip().startswith(b"0")
-    reflect_ok = b"[agent] reflection:" in out
+    # line-start anchor: the install echo of agent.sh contains
+    # "[agent] reflection:" mid-line and must not count as a real
+    # reflection turn
+    reflect_ok = b"\n[agent] reflection:" in out
     print(f"=== steps={m.steps:,} wall={time.time() - t0:.1f}s "
           f"backend={args.backend} ===")
     ok = apps_ok and skill_ok and recall_ok and unsched_ok and reflect_ok

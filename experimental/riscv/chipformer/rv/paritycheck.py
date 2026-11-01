@@ -65,11 +65,13 @@ def main() -> int:
     print(f"[parity: python  steps={pm.steps:,} hash={ph} out={len(pm.out)} B]")
 
     fm = FastLinuxMachine(args.image, args.dtb, backend=None, binary=args.bin)
-    fm.run(args.steps)
-    fh = fm.hash()
-    fout = bytes(fm.out)
+    try:
+        fm.run(args.steps)
+        fh = fm.hash()
+        fout = bytes(fm.out)
+    finally:
+        fm.close()
     print(f"[parity: fast    steps={fm.steps:,} hash={fh} out={len(fout)} B]")
-    fm.close()
 
     ok_hash = ph == fh
     ok_out = bytes(pm.out) == fout

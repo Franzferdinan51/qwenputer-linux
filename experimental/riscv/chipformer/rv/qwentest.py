@@ -6,7 +6,7 @@ runs it, and checks the answer made the full round trip:
 
     guest shell -> MMIO window -> host backend -> MMIO window -> guest shell
 
-    python3 -m chipformer.rv.qwentest Image [--backend echo|lmstudio]
+    python3 -m chipformer.rv.qwentest Image [--backend echo|lmstudio|builtin]
         [--prompt "hello qwen"] [--max-steps 300000000]
         [--log boot-logs/qwen1.out]
 
@@ -15,6 +15,7 @@ host saw the exact prompt), 1 = FAIL (the transcript says why).
 """
 
 import argparse
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -30,7 +31,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
     ap.add_argument("--dtb", default=str(HERE / "env" / "linux" / "sixtyfourmb.dtb"))
-    ap.add_argument("--backend", choices=("echo", "lmstudio"), default="echo")
+    ap.add_argument("--backend", choices=("echo", "lmstudio", "builtin"),
+                    default="echo")
     ap.add_argument("--lm-url", default=None)
     ap.add_argument("--prompt", default="hello qwen")
     ap.add_argument("--max-steps", type=int, default=300_000_000)
@@ -65,7 +67,7 @@ def main() -> int:
         "cat > /tmp/ask <<'QWEOF'\n" + ASK_SH + "QWEOF\n"
         "chmod +x /tmp/ask\n"
         "echo STAGE_ASK\n"
-        f"/tmp/ask \"{args.prompt}\"\n"
+        f"/tmp/ask {shlex.quote(args.prompt)}\n"
     ).encode()
     # fed only after the answer is seen on the console: typing the next
     # command while ask is still waiting on its `read` races the injected

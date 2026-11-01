@@ -101,6 +101,9 @@ class LinuxMachine:
 
     def load_image(self, data: bytes, addr: int = RAM_BASE) -> None:
         off = addr - RAM_BASE
+        if off < 0 or off + len(data) > self.ram_size:
+            raise ValueError(f"image of {len(data)} bytes at {addr:#x} "
+                             f"does not fit the {self.ram_size} bytes of RAM")
         self.ram[off:off + len(data)] = data
 
     def boot(self, dtb: bytes, dtb_off: int = 0x3FFC000) -> None:

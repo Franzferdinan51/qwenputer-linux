@@ -333,5 +333,7 @@ def test_qwen_console_line_protocol():
     m.on_qwen_prompt = lambda p: seen.append(p) or f"qwen-echo: {p}"
     m.run(len(words))
     assert seen == ["hi"]
-    assert bytes(m.inp) == b"qwen-echo: hi\n"  # queued as console input
+    # the QWENANS: prefix marks the line machine-typed (guest readers
+    # strip it; see linux._qwen_line_feed and env/linux/ask.sh)
+    assert bytes(m.inp) == b"QWENANS:qwen-echo: hi\n"  # queued as console input
     assert b"QWEN:hi\n" in bytes(m.out)        # the request line stays visible

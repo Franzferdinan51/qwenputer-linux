@@ -27,9 +27,13 @@ read_ans() {
   done
 }
 
+# the whole command line is the question: ask what is up must send
+# all three words, not just $1 (an unquoted multiword ask used to
+# silently send its first word only)
+prompt="$*"
 if command -v devmem >/dev/null 2>&1; then
   QW=0x10010000
-  for b in $(printf '%s' "$1" | od -An -tu1); do
+  for b in $(printf '%s' "$prompt" | od -An -tu1); do
     devmem $QW 8 "$b" >/dev/null
   done
   devmem $((QW + 8)) 8 1 >/dev/null
@@ -42,7 +46,7 @@ if command -v devmem >/dev/null 2>&1; then
   echo
 elif [ -c /dev/mem ]; then
   D=268439552
-  printf '%s' "$1" | dd of=/dev/mem bs=1 seek=$D 2>/dev/null
+  printf '%s' "$prompt" | dd of=/dev/mem bs=1 seek=$D 2>/dev/null
   printf '\001' | dd of=/dev/mem bs=1 seek=$((D + 8)) 2>/dev/null
   while :; do
     s=$(dd if=/dev/mem bs=1 skip=$((D + 4)) count=1 2>/dev/null | od -An -tu1 | tr -d ' \n')
@@ -55,7 +59,7 @@ elif [ -c /dev/mem ]; then
   done
   echo
 else
-  printf 'QWEN:%s\n' "$1"
+  printf 'QWEN:%s\n' "$prompt"
   read_ans
   # Delegation: when the host bridge is on (qwenbackend.agent_bridge),
   # the model in the seat may answer with a [[RUN-AGENT: ...]] marker
@@ -68,10 +72,10 @@ else
       t=$(printf '%s' "$ans" | sed 's/^\[\[RUN-AGENT: //; s/\]\]$//')
       echo "[ask] the model delegated this to hermes-agent: $t"
       HA=/tmp/hermes-agent; [ -x "$HA" ] || HA=/tmp/agent
-      rep=$($HA $t | sed -n 's/^AGENT_ANSWER: //p' | tail -1)
+      rep=$("$HA" "$t" | sed -n 's/^AGENT_ANSWER: //p' | tail -1)
       [ -z "$rep" ] && rep="(the hermes agent produced no answer)"
       echo "[ask] hermes-agent reported: $rep"
-      printf 'QWEN:%s HERMES REPORT: %s\n' "$1" "$rep"
+      printf 'QWEN:%s HERMES REPORT: %s\n' "$prompt" "$rep"
       read_ans
       ;;
   esac

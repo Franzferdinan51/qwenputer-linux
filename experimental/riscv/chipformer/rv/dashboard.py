@@ -36,6 +36,22 @@ SETTINGS_PATH = os.environ.get(
     os.path.expanduser("~/qwenputer-test/dash-settings.json"))
 START = time.time()
 
+
+def _version():
+    """Short git SHA of the running checkout, for the page footer."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", os.path.dirname(os.path.abspath(__file__)),
+             "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5, check=False)
+        sha = out.stdout.strip()
+        return sha if re.fullmatch(r"[0-9a-f]{4,40}", sha or "") else "unknown"
+    except Exception:
+        return "unknown"
+
+
+VERSION = _version()
+
 DEFAULTS = {
     "backend_url": "http://127.0.0.1:1234",
     "model": "auto",
@@ -98,23 +114,30 @@ def save_settings(new):
 def resolve_model(s):
     """Builtin rule (mirrors qwenbackend.builtin_backend): the qwen3.5-4b
     family member already listed by the backend; a pristine base id wins
-    over fine-tune tags; never loads anything."""
+    over fine-tune tags; never loads anything, and never silently serves
+    a different model when the wanted one is missing (the page already
+    renders a None model as unreachable)."""
     try:
         url = s["backend_url"].rstrip("/") + "/v1/models"
         with urllib.request.urlopen(url, timeout=5) as r:
-            ids = [d["id"] for d in json.load(r).get("data", [])]
+            ids = [d.get("id") for d in json.load(r).get("data", [])
+                   if d.get("id")]
     except Exception as e:
         return None, str(e)[:160]
     if not ids:
         return None, "backend listed no models"
     want = (s.get("model") or "auto").strip()
-    if want != "auto" and want in ids:
-        return want, None
+    if want != "auto":
+        if want in ids:
+            return want, None
+        return None, "model %r is not loaded (have: %s)" % (
+            want, ", ".join(ids)[:120])
     fam = [i for i in ids if "qwen3.5-4b" in i.lower()]
     if fam:
         fam.sort(key=lambda i: ("3d-coder" in i.lower(), i))
         return fam[0], None
-    return ids[0], None
+    return None, "no qwen3.5-4b model loaded (have: %s)" % (
+        ", ".join(ids)[:120])
 
 
 def tail(path, n=6000):
@@ -157,6 +180,7 @@ def get_status():
     return {
         "time": time.strftime("%H:%M:%S"),
         "uptime_s": int(time.time() - START),
+        "version": VERSION,
         "seat": {"model": model, "backend": s["backend_url"], "error": err},
         "stock": {"pass": "CIRCUIT AGENT: PASS" in stock_out},
         "grown": {
@@ -297,12 +321,80 @@ PAGE = r"""<!DOCTYPE html>
 <title>Qwenputer</title>
 <style>
 :root{--bg:#0d1117;--card:#161b22;--line:#2a3240;--tx:#e8ecf1;--dim:#9aa7b5;
---acc:#e8b93e;--ok:#3fb950;--bad:#f85149}
+--acc:#e8b93e;--ok:#3fb950;--bad:#f85149;--blue:#57c7ff;--bubble:#1f3a5f;
+--code:#0a0d12;--shadow:0 2px 14px rgba(0,0,0,.35)}
+[data-theme="light"]{--bg:#f4f2ec;--card:#ffffff;--line:#d9d4c5;--tx:#23262b;
+--dim:#6b7280;--acc:#9a6b00;--ok:#1a7f37;--bad:#cf222e;--blue:#0969da;
+--bubble:#ddf0ff;--code:#eef0f2;--shadow:0 2px 14px rgba(60,50,20,.12)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);
-font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif}
-header{display:flex;align-items:baseline;gap:12px;padding:14px 18px 6px}
+font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif;
+transition:background .25s,color .25s}
+header{display:flex;align-items:center;gap:12px;padding:14px 18px 6px;
+background:linear-gradient(120deg,rgba(232,185,62,.10),rgba(87,199,255,.07));
+border-bottom:1px solid var(--line)}
+.logo{width:34px;height:34px;flex:none;border-radius:9px;
+background:linear-gradient(135deg,#e8b93e,#b3541e 60%,#57c7ff);
+display:flex;align-items:center;justify-content:center;font-size:19px;
+box-shadow:var(--shadow)}
 h1{font-size:21px;margin:0;letter-spacing:.06em}
 .sub{color:var(--dim);font-size:13px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;
+background:var(--dim);margin-right:6px;vertical-align:1px}
+.dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:pulse 2s infinite}
+.dot.bad{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+@keyframes pulse{50%{opacity:.45}}
+#theme{margin-left:8px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+gap:10px;margin-bottom:12px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:10px 12px;box-shadow:var(--shadow)}
+.tile .k{font-size:11px;letter-spacing:.08em;color:var(--dim)}
+.tile .v{font-size:19px;font-weight:700;margin-top:2px}
+.tile .v small{font-size:12px;font-weight:400;color:var(--dim)}
+.tile .bar{height:5px;border-radius:3px;background:var(--code);margin-top:7px;
+overflow:hidden}
+.tile .bar i{display:block;height:100%;width:0;border-radius:3px;
+background:linear-gradient(90deg,var(--acc),var(--blue));transition:width .6s}
+.card{transition:border-color .2s,transform .15s}
+.card:hover{border-color:var(--acc)}
+.msg .body p{margin:0 0 6px}.msg .body p:last-child{margin:0}
+.msg .body ul,.msg .body ol{margin:4px 0 8px;padding-left:22px}
+.msg .body li{margin:2px 0}
+.msg .body pre{background:var(--code);border:1px solid var(--line);
+border-radius:8px;padding:8px;font-size:12px;overflow:auto;max-height:260px}
+.msg .body code{background:var(--code);padding:1px 6px;border-radius:5px;
+font-size:13px}
+.msg .body pre code{background:none;padding:0}
+.msg .body h1,.msg .body h2,.msg .body h3{font-size:15px;margin:8px 0 4px}
+.msg .body blockquote{border-left:3px solid var(--acc);margin:6px 0;
+padding:2px 10px;color:var(--dim)}
+.msg .body table{border-collapse:collapse;margin:6px 0;font-size:13px}
+.msg .body th,.msg .body td{border:1px solid var(--line);padding:3px 8px}
+#pal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;
+align-items:flex-start;justify-content:center;z-index:50;padding-top:12vh}
+#pal.on{display:flex}
+#palbox{width:min(560px,92vw);background:var(--card);border:1px solid var(--line);
+border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+#palin{width:100%;background:none;border:0;border-bottom:1px solid var(--line);
+color:var(--tx);padding:13px 15px;font:inherit;font-size:16px;outline:none}
+#palopts{max-height:300px;overflow-y:auto;padding:6px}
+.palopt{padding:9px 12px;border-radius:8px;cursor:pointer;font-size:14px}
+.palopt small{color:var(--dim);margin-left:8px}
+.palopt.sel{background:var(--bubble)}
+footer{max-width:980px;margin:0 auto;padding:14px 16px 26px;color:var(--dim);
+font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+footer .r{margin-left:auto}
+.app .row{display:flex;gap:8px;margin-top:10px}
+.btnsm{background:var(--code);border:1px solid var(--line);color:var(--tx);
+border-radius:8px;padding:5px 12px;font:inherit;font-size:12px;cursor:pointer}
+.btnsm:hover{border-color:var(--acc)}
+.app .ico{font-size:22px;margin-right:8px}
+.toolbar{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.toolbar .sp{flex:1}
+@media(max-width:640px){.sub{display:none}#msgs{height:52vh}
+ header{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.dot.ok{animation:none}
+ *{transition:none!important}}
 #seat{margin-left:auto;color:var(--dim);font-size:13px;text-align:right}
 #seat b{color:var(--tx)}
 nav{display:flex;gap:4px;padding:8px 14px 0;border-bottom:1px solid var(--line);
@@ -323,13 +415,13 @@ padding:14px}
 border:1px solid var(--line)}
 .badge.ok{color:var(--ok);border-color:var(--ok)}
 .badge.bad{color:var(--bad);border-color:var(--bad)}
-pre{background:#0a0d12;border:1px solid var(--line);border-radius:8px;
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;
 padding:10px;font-size:12px;overflow:auto;max-height:180px;white-space:pre-wrap}
 a{color:var(--acc)}
 #msgs{height:56vh;overflow-y:auto;padding:6px 2px}
 .msg{max-width:82%;padding:9px 13px;border-radius:12px;margin:8px 0;
 white-space:pre-wrap;word-wrap:break-word}
-.msg.u{background:#1f3a5f;margin-left:auto}
+.msg.u{background:var(--bubble);margin-left:auto}
 .msg.a{background:var(--card);border:1px solid var(--line)}
 .msg .who{font-size:11px;color:var(--dim);margin-bottom:3px}
 .msg .think{color:var(--dim);font-size:13px;border-left:2px solid var(--line);
@@ -353,15 +445,17 @@ label{display:block;margin:12px 0 4px;color:var(--dim);font-size:13px}
 input[type=text],input[type=number],textarea{width:100%;background:var(--card);
 border:1px solid var(--line);color:var(--tx);border-radius:8px;padding:9px;
 font:inherit}
-.app{display:block;text-decoration:none;background:var(--card);
+.app{display:block;background:var(--card);
 border:1px solid var(--line);border-radius:10px;padding:14px;color:var(--tx)}
 .app b{font-size:16px}.app span{display:block;color:var(--dim);font-size:13px;
 margin-top:3px}
-code{background:#0a0d12;padding:1px 6px;border-radius:5px}
+code{background:var(--code);padding:1px 6px;border-radius:5px}
 </style></head><body>
-<header><h1>QWENPUTER</h1>
+<header><div class="logo">&#9881;</div><h1>QWENPUTER</h1>
 <div class="sub">one model file &mdash; a brain and a computer</div>
 <div id="seat">seat: <b id="seatmodel">&hellip;</b><br><span id="seatsub"></span></div>
+<button class="ghost" id="theme" title="toggle light/dark">&#9790;</button>
+<button class="ghost" id="palbtn" title="command palette (Ctrl/&#8984;+K)">&#8984;K</button>
 </header>
 <nav>
 <button data-t="overview" class="on">Overview</button>
@@ -373,6 +467,13 @@ code{background:#0a0d12;padding:1px 6px;border-radius:5px}
 </nav>
 <main>
 <section id="overview" class="tab on">
+<div class="tiles">
+<div class="tile"><div class="k">SEAT MODEL</div><div class="v" id="t-model" style="font-size:14px">&hellip;</div></div>
+<div class="tile"><div class="k">UPTIME</div><div class="v" id="t-up">&hellip;</div></div>
+<div class="tile"><div class="k">CHAT</div><div class="v" id="t-chat">&hellip;</div><div class="bar"><i id="t-chatbar"></i></div></div>
+<div class="tile"><div class="k">CIRCUIT TOKENS</div><div class="v" id="t-tok">&hellip;</div><div class="bar"><i id="t-tokbar"></i></div></div>
+<div class="tile"><div class="k">GUEST LINUX</div><div class="v" id="t-guest">&hellip;</div></div>
+</div>
 <div class="card" style="margin-bottom:12px"><h3>ACTIVITY &mdash; LIVE</h3>
 <div id="nowrows" style="font-size:15px;line-height:1.65;margin:2px 0 10px">
 <div><b>chat:</b> <span id="now-chat">&hellip;</span></div>
@@ -427,6 +528,10 @@ Shift+Enter makes a new line. This chat is with the same 4B brain the
 in-weights computer consults.</p>
 </section>
 <section id="terminal" class="tab">
+<div class="toolbar"><span id="termstate" class="dim">terminal loads when this tab opens</span>
+<span class="sp"></span>
+<button class="btnsm" id="termopen">open in new window</button>
+<button class="btnsm" id="termreload">reconnect</button></div>
 <iframe id="term" title="Qwen-Linux terminal"></iframe>
 </section>
 <section id="desktop" class="tab"><div class="cards">
@@ -456,11 +561,49 @@ most of these run in the guest &mdash; tap one to open the terminal.</p>
 <label>chat system prompt</label>
 <textarea id="s-sys" rows="4"></textarea>
 <p><button class="act" id="save" style="padding:10px 22px">Save settings</button>
+<button class="ghost" id="testbe">Test backend</button>
 <span id="saved" style="color:var(--ok)"></span></p>
+<p class="dim" id="resolved"></p>
 </section>
 </main>
+<footer><span>Qwenputer dashboard</span><span id="footver"></span>
+<span class="r" id="footup"></span></footer>
+<div id="pal"><div id="palbox"><input id="palin" placeholder="type a command or search&hellip;" autocomplete="off">
+<div id="palopts"></div></div></div>
 <script>
 const $=id=>document.getElementById(id);
+try{if(localStorage.qtheme==='light')document.documentElement.dataset.theme='light';}catch(e){}
+$('theme').onclick=()=>{const d=document.documentElement;
+ d.dataset.theme=d.dataset.theme==='light'?'':'light';
+ try{localStorage.qtheme=d.dataset.theme||'dark';}catch(e){}};
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function md(src){
+ let out=esc(src),code=[];
+ out=out.replace(/```(\w*)\n([\s\S]*?)```/g,(m,l,c)=>{code.push('<pre><code>'+c+'</code></pre>');return '\u0000'+(code.length-1)+'\u0000';});
+ const lines=out.split('\n'),html=[];let list=null;
+ const inline=s=>s.replace(/`([^`]+)`/g,'<code>$1</code>')
+  .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+  .replace(/(^|\W)\*([^*\n]+)\*/g,'$1<em>$2</em>');
+ for(const ln of lines){
+  let m;
+  if(/^\u0000\d+\u0000$/.test(ln)){if(list){html.push('</'+list+'>');list=null;}html.push(code[+ln.slice(1,-1)]);continue;}
+  if(m=ln.match(/^(#{1,3})\s+(.*)/)){if(list){html.push('</'+list+'>');list=null;}
+   html.push('<h3>'+inline(m[2])+'</h3>');continue;}
+  if(m=ln.match(/^&gt;\s?(.*)/)){if(list){html.push('</'+list+'>');list=null;}
+   html.push('<blockquote>'+inline(m[1])+'</blockquote>');continue;}
+  if(m=ln.match(/^(\s*)[-*]\s+(.*)/)){if(list!=='ul'){if(list)html.push('</'+list+'>');html.push('<ul>');list='ul';}
+   html.push('<li>'+inline(m[2])+'</li>');continue;}
+  if(m=ln.match(/^(\s*)\d+[.)]\s+(.*)/)){if(list!=='ol'){if(list)html.push('</'+list+'>');html.push('<ol>');list='ol';}
+   html.push('<li>'+inline(m[2])+'</li>');continue;}
+  if(/^\s*$/.test(ln)){if(list){html.push('</'+list+'>');list=null;}continue;}
+  if(/^\|(.+)\|$/.test(ln)){const cells=ln.slice(1,-1).split('|').map(c=>inline(c.trim()));
+   if(cells.every(c=>/^:?-{3,}:?$/.test(c.replace(/<[^>]*>/g,''))))continue;
+   html.push('<table><tr>'+cells.map(c=>'<td>'+c+'</td>').join('')+'</tr></table>');continue;}
+  html.push('<p>'+inline(ln)+'</p>');
+ }
+ if(list)html.push('</'+list+'>');
+ return html.join('');
+}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));
  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
@@ -468,18 +611,24 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
  if(b.dataset.t==='terminal'&&!$('term').src)
    $('term').src='http://'+location.hostname+':8951/';
 });
-const APPS=[['live terminal','the Qwen-Linux guest shell itself — everything below runs here','Terminal tab'],
-['ask','ask the built-in weights a question; the answer is typed back into the guest','ask "your question"'],
-['hermes-agent','the guest agent — works through the weights with the whole Linux side: files, exact arithmetic, the notebook','hermes-agent "your task"'],
-['notebook','the guest\u2019s persistent memory at /root/nb — the agent writes plans and facts there and reads them back','inside the guest'],
-['MicroPython','Python running on the Qwenputer CPU (the upstream port)','on the circuit'],
-['bare-metal agent','agent.c — the harness compiled for the circuit itself: store / recall / mul through the mailbox in RAM','on the circuit'],
-['Doom','the Doom port for the Qwenputer CPU, grown memory map build','on the CPU port']];
-$('apps').innerHTML=APPS.map(a=>'<a class="app" href="#" data-go="terminal"><b>'
- +a[0]+'</b><span>'+a[1]+'</span><span><code>'+a[2]+'</code></span></a>').join('');
-document.querySelectorAll('[data-go]').forEach(el=>el.onclick=e=>{
- e.preventDefault();
- document.querySelector('nav button[data-t="terminal"]').click();});
+const APPS=[['\u25b8','live terminal','the Qwen-Linux guest shell itself — everything below runs here','Terminal tab',1],
+['?', 'ask','ask the built-in weights a question; the answer is typed back into the guest','ask "your question"',1],
+['\u25c9','hermes-agent','the guest agent — works through the weights with the whole Linux side: files, exact arithmetic, the notebook','hermes-agent "your task"',1],
+['\u2595','notebook','the guest\u2019s persistent memory at /root/nb — the agent writes plans and facts there and reads them back','ls /root/nb',1],
+['\u03bb','MicroPython','Python running on the Qwenputer CPU (the upstream port)','on the circuit',0],
+['\u25c8','bare-metal agent','agent.c — the harness compiled for the circuit itself: store / recall / mul through the mailbox in RAM','on the circuit',0],
+['\u25e9','Doom','the Doom port for the Qwenputer CPU, grown memory map build','on the CPU port',0]];
+$('apps').innerHTML=APPS.map((a,i)=>'<div class="app"><div><span class="ico">'
+ +a[0]+'</span><b>'+a[1]+'</b></div><span>'+a[2]+'</span><span><code>'
+ +a[3]+'</code></span><div class="row">'
+ +(a[4]?'<button class="btnsm" data-term="'+i+'">open in terminal</button><button class="btnsm" data-copy="'+i+'">copy command</button>':'<span class="dim">runs on the compiled circuit, not in the guest</span>')
+ +'</div></div>').join('');
+function goTerm(){document.querySelector('nav button[data-t="terminal"]').click();}
+document.querySelectorAll('[data-term]').forEach(el=>el.onclick=goTerm);
+document.querySelectorAll('[data-copy]').forEach(el=>el.onclick=()=>{
+ const cmd=APPS[+el.dataset.copy][3];
+ if(navigator.clipboard)navigator.clipboard.writeText(cmd);
+ el.textContent='copied';setTimeout(()=>el.textContent='copy command',1500);});
 async function status(){
  try{const r=await fetch('/api/status');const j=await r.json();
   $('seatmodel').textContent=j.seat.model||'unreachable';
@@ -495,14 +644,23 @@ async function status(){
   $('ov-term').innerHTML=j.terminal_up?
    '<span class="badge ok">up</span> &mdash; open the Terminal tab':
    '<span class="badge bad">down</span>';
+  $('t-model').textContent=(j.seat.model||'unreachable').split('/').pop();
+  const up=j.uptime_s||0,hh=Math.floor(up/3600),mm=Math.floor(up%3600/60);
+  $('t-up').innerHTML=hh+'<small>h</small> '+mm+'<small>m</small>';
+  $('t-guest').innerHTML=j.terminal_up?'<span class="dot ok"></span>up':'<span class="dot bad"></span>down';
+  $('footver').textContent='build '+(j.version||'unknown')+' · '+j.time;
+  $('footup').textContent='dashboard up '+hh+'h '+mm+'m';
+  $('termstate').textContent=j.terminal_up?'guest terminal is up':'guest terminal is down — start liveterm (:8951)';
+  $('resolved').textContent='resolved model: '+(j.seat.model||('unreachable — '+(j.seat.error||'')));
  }catch(e){}
 }
 status();setInterval(status,10000);
 const hist=[];
-function bubble(role,text){
+function bubble(role,text,rich){
  const d=document.createElement('div');d.className='msg '+(role==='user'?'u':'a');
  d.innerHTML='<div class="who">'+(role==='user'?'you':'qwen 3.5 4b')+'</div>';
- const body=document.createElement('div');body.textContent=text||'';
+ const body=document.createElement('div');body.className='body';
+ if(rich)body.innerHTML=md(text||'');else body.textContent=text||'';
  d.appendChild(body);$('msgs').appendChild(d);$('msgs').scrollTop=1e9;
  return body;
 }
@@ -516,8 +674,9 @@ async function send(){
  let think=document.createElement('div');think.className='think';
  think.style.display='none';body.parentNode.insertBefore(think,body);
  let content='',reasoning='';
- const stat=()=>{$('chatstat').textContent='working\u2026 '+
-  Math.round((Date.now()-t0)/1000)+'s \u00b7 '+ntok+' tokens so far';};
+ const stat=()=>{const el=(Date.now()-t0)/1000;
+  $('chatstat').textContent='working\u2026 '+Math.round(el)+'s \u00b7 '+ntok+
+  ' tokens so far'+(el>2&&ntok?' \u00b7 '+(ntok/el).toFixed(1)+' tok/s':'');};
  stat();const iv=setInterval(stat,500);
  try{
   const r=await fetch('/api/chat',{method:'POST',signal:AC.signal,
@@ -546,10 +705,11 @@ async function send(){
  }catch(e){if(e.name!=='AbortError')body.textContent='[connection error] '+e;
   else if(!content)body.textContent='(stopped)';}
  clearInterval(iv);
- if(!content&&reasoning){body.textContent=reasoning;}
- if(content)hist.push({role:'assistant',content});
- $('chatstat').textContent='done \u00b7 '+
-  Math.round((Date.now()-t0)/1000)+'s \u00b7 '+ntok+' tokens';
+ if(!content&&reasoning){content=reasoning;}
+ if(content){body.innerHTML=md(content);hist.push({role:'assistant',content});}
+ const dt=(Date.now()-t0)/1000;
+ $('chatstat').textContent='done \u00b7 '+Math.round(dt)+'s \u00b7 '+ntok+
+  ' tokens'+(dt>0&&ntok?' \u00b7 '+(ntok/dt).toFixed(1)+' tok/s':'');
  AC=null;$('send').disabled=false;$('stop').style.display='none';
  $('inp').focus();
 }
@@ -617,6 +777,12 @@ async function activity(){
      j.grown.tokens.toLocaleString()):'not running'));
   $('now-guest').textContent=j.terminal_up?
    'up - the agent shell is sitting on its console':'down';
+  $('t-chat').innerHTML=j.chat_open?'<span class="dot ok"></span>live':'idle';
+  $('t-chatbar').style.width=Math.min(100,rate*4)+'%';
+  $('t-tok').textContent=(j.grown.tokens||0).toLocaleString();
+  const tp=j.grown.prompts||0;
+  $('t-tokbar').style.width=Math.min(100,tp*10)+'%';
+  $('t-tok').title=tp+' prompts answered';
   $('vizlegend').textContent='the dots are real events: a dot '
    +'crosses when the chat streams words, and a white flash '
    +'crosses when the computer in the weights answers a '
@@ -640,6 +806,55 @@ $('save').onclick=async()=>{
  $('saved').textContent='saved';setTimeout(()=>$('saved').textContent='',2500);
  status();
 };
+$('testbe').onclick=async()=>{
+ $('saved').textContent='testing\u2026';
+ try{const r=await fetch('/api/status');const j=await r.json();
+  $('saved').textContent=j.seat.model?('ok: '+j.seat.model):('FAILED: '+(j.seat.error||'no model'));
+ }catch(e){$('saved').textContent='FAILED: '+e;}
+ setTimeout(()=>{if($('saved').textContent.startsWith('ok'))$('saved').textContent='';},4000);
+};
+function termURL(){return 'http://'+location.hostname+':8951/';}
+$('termopen').onclick=()=>window.open(termURL(),'_blank');
+$('termreload').onclick=()=>{$('term').src=termURL();};
+const PAL=[
+ ['Go: Overview','show the status dashboard',()=>document.querySelector('nav button[data-t="overview"]').click()],
+ ['Go: Chat','talk to the built-in weights',()=>document.querySelector('nav button[data-t="chat"]').click()],
+ ['Go: Terminal','the live Qwen-Linux guest',()=>document.querySelector('nav button[data-t="terminal"]').click()],
+ ['Go: Desktop','framebuffer spike placeholder',()=>document.querySelector('nav button[data-t="desktop"]').click()],
+ ['Go: Apps','programs on the Qwenputer',()=>document.querySelector('nav button[data-t="apps"]').click()],
+ ['Go: Settings','backend, model, prompt',()=>document.querySelector('nav button[data-t="settings"]').click()],
+ ['Toggle theme','dark / light',()=>$('theme').click()],
+ ['Chat: what are you?','preset question',()=>{document.querySelector('nav button[data-t="chat"]').click();$('inp').value='Explain what you are, in one short paragraph.';send();}],
+ ['Chat: the computer inside you','preset question',()=>{document.querySelector('nav button[data-t="chat"]').click();$('inp').value='What is the computer inside you, and what has it computed so far?';send();}],
+ ['Copy: ask command','ask "your question"',()=>{if(navigator.clipboard)navigator.clipboard.writeText('ask "your question"');}],
+ ['Copy: hermes-agent command','hermes-agent "your task"',()=>{if(navigator.clipboard)navigator.clipboard.writeText('hermes-agent "your task"');}],
+];
+let palSel=0;
+function palRender(){
+ const q=$('palin').value.toLowerCase();
+ const hits=PAL.map((p,i)=>[p,i]).filter(([p])=>p[0].toLowerCase().includes(q)||p[1].toLowerCase().includes(q));
+ palSel=Math.min(palSel,Math.max(0,hits.length-1));
+ $('palopts').innerHTML=hits.map(([p,i],k)=>'<div class="palopt'+(k===palSel?' sel':'')+'" data-i="'+i+'">'+p[0]+'<small>'+p[1]+'</small></div>').join('')||'<div class="palopt">no match</div>';
+ document.querySelectorAll('.palopt[data-i]').forEach(el=>{
+  el.onclick=()=>{palClose();PAL[+el.dataset.i][2]();};
+  el.onmousemove=()=>{palSel=[...document.querySelectorAll('.palopt[data-i]')].indexOf(el);palRender();};});
+ palHits=hits;
+}
+let palHits=[];
+function palOpen(){$('pal').classList.add('on');$('palin').value='';palSel=0;palRender();setTimeout(()=>$('palin').focus(),0);}
+function palClose(){$('pal').classList.remove('on');}
+$('palbtn').onclick=palOpen;
+$('pal').onclick=e=>{if(e.target===$('pal'))palClose();};
+$('palin').oninput=()=>{palSel=0;palRender();};
+$('palin').onkeydown=e=>{
+ if(e.key==='Escape')palClose();
+ else if(e.key==='ArrowDown'){e.preventDefault();palSel=Math.min(palSel+1,palHits.length-1);palRender();}
+ else if(e.key==='ArrowUp'){e.preventDefault();palSel=Math.max(palSel-1,0);palRender();}
+ else if(e.key==='Enter'&&palHits[palSel]){palClose();palHits[palSel][0][2]();}
+};
+document.addEventListener('keydown',e=>{
+ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('pal').classList.contains('on')?palClose():palOpen();}
+});
 </script></body></html>
 """
 
@@ -812,7 +1027,10 @@ class Handler(BaseHTTPRequestHandler):
                 if delta.get("content"):
                     content += delta["content"]
                     send({"delta": delta["content"]})
-                elif delta.get("reasoning_content"):
+                # separate if, not elif: one delta can carry both
+                # content and reasoning_content, and elif dropped the
+                # thinking half of such chunks.
+                if delta.get("reasoning_content"):
                     send({"reasoning": delta["reasoning_content"]})
         return content
 

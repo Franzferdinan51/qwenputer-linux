@@ -9,7 +9,7 @@
 # It is part shell, part scheduler:
 #   - type a shell command -> it runs, foreground
 #   - type: hermes-agent "a task" -> an agent session, foreground
-#   - type: exit -> back to the plain shell (run `agentshell` to return)
+#   - type: exit -> back to the plain shell (/tmp/agentshell to return)
 #   - idle 60s -> the tick: heartbeat checks + due jobs run, foreground
 # Everything is serialized through this one process, so exactly one
 # reader ever waits on the console and the QWEN: protocol just works.
@@ -156,15 +156,22 @@ while true; do
   fire_due_jobs
   printf 'agent> '
   line=""
-  if read -t 60 line; then
-    case $line in
+  # IFS= and -r: the line is a command, read it verbatim (the bare
+  # read ate backslashes and edge whitespace out of typed commands)
+  if IFS= read -r -t 60 line; then
+    # dispatch on the line with leading blanks stripped, so a typed
+    # "  exit" still leaves; the line itself runs verbatim
+    tline=$(printf '%s' "$line" | sed 's/^[[:space:]]*//')
+    case $tline in
       '') continue ;;
       exit|quit)
-        echo "agentshell: leaving - run 'agentshell' to come back"
+        echo "agentshell: leaving - run '/tmp/agentshell' to come back"
         break ;;
       sh) /bin/sh ;;
-      hermes-agent|hermes-agent\ *) eval "/tmp/hermes-agent ${line#hermes-agent}" ;;
-      ask|ask\ *) eval "/tmp/ask ${line#ask}" ;;
+      hermes-agent|hermes-agent\ *) eval "/tmp/hermes-agent ${tline#hermes-agent}" ;;
+      ask|ask\ *) eval "/tmp/ask ${tline#ask}" ;;
+      nb|nb\ *) eval "/tmp/nb ${tline#nb}" ;;
+      calc|calc\ *) eval "/tmp/calc ${tline#calc}" ;;
       *) eval "$line" ;;
     esac
   fi

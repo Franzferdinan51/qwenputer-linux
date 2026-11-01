@@ -31,13 +31,20 @@ HERE = Path(__file__).parent
 ASK_SH = (HERE / "env" / "linux" / "ask.sh").read_text()
 AGENT_SH = (HERE / "env" / "linux" / "agent.sh").read_text()
 ASHELL_SH = (HERE / "env" / "linux" / "agentshell.sh").read_text()
+NB_SH = (HERE / "env" / "linux" / "nb.sh").read_text()
+CALC_SH = (HERE / "env" / "linux" / "calc.sh").read_text()
 # The guest's soul: env/linux/SOUL.md - the Hermes Agent SOUL.md
 # (Nous Research) re-homed for this machine; seeded into the
 # guest at /root/SOUL.md and folded into wake-up prompts by
 # agent.sh (first ~300 chars carry identity + directness).
 SOUL_MD = (HERE / "env" / "linux" / "SOUL.md").read_text()
-if not SOUL_MD.endswith("\n"):
-    SOUL_MD += "\n"
+# Every installed file feeds the guest through a <<'QWEOF' heredoc, so
+# each one must end with a newline - otherwise its last line glues
+# onto the QWEOF terminator, the heredoc never ends, and the rest of
+# the install (including the agentshell launch) is swallowed into it.
+for _name in ("ASK_SH", "AGENT_SH", "ASHELL_SH", "NB_SH", "CALC_SH", "SOUL_MD"):
+    if not globals()[_name].endswith("\n"):
+        globals()[_name] += "\n"
 
 PAGE = """<!doctype html>
 <meta charset="utf-8">
@@ -143,7 +150,10 @@ class MachineThread(threading.Thread):
             "cp /tmp/agent /tmp/hermes-agent\n"
             "cat > /tmp/agentshell <<'QWEOF'\n" + ASHELL_SH + "QWEOF\n"
             "cp /tmp/agentshell /root/agentshell\n"
-            "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent /tmp/agentshell\n"
+            "cat > /tmp/nb <<'QWEOF'\n" + NB_SH + "QWEOF\n"
+            "cat > /tmp/calc <<'QWEOF'\n" + CALC_SH + "QWEOF\n"
+            "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent /tmp/agentshell "
+            "/root/agentshell /tmp/nb /tmp/calc\n"
             "mkdir -p /root/nb /root/skills /root/apps\n"
             "[ -f /root/SOUL.md ] || cat > /root/SOUL.md <<'QWEOF'\n" + SOUL_MD + "QWEOF\n"
             "echo ASK_READY the agentshell takes the console now: shell commands and hermes-agent tasks run there, scheduled jobs fire on their own, exit returns here\n"
@@ -205,6 +215,8 @@ def main() -> int:
                     help="run the guest on the fastlinux.c native core")
     ap.add_argument("--fast-bin", default=None)
     args = ap.parse_args()
+    if not args.snapshot and not args.image:
+        ap.error("the Image path is required unless --snapshot is given")
 
     backend = None
     if args.backend != "off":
@@ -244,8 +256,14 @@ def main() -> int:
                 self.end_headers()
                 self.wfile.write(body)
             elif self.path.startswith("/api/out"):
-                since = int(self.path.split("since=")[-1]) if "since=" in self.path else 0
-                data, until = mt.out_since(since)
+                try:
+                    since = int(self.path.split("since=")[-1]) \
+                        if "since=" in self.path else 0
+                except ValueError:
+                    self.send_response(400)
+                    self.end_headers()
+                    return
+                data, until = mt.out_since(max(since, 0))
                 body = json.dumps({"data": data, "until": until}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -258,9 +276,15 @@ def main() -> int:
 
         def do_POST(self):
             if self.path == "/api/in":
-                n = int(self.headers.get("Content-Length", 0))
-                payload = json.loads(self.rfile.read(n) or b"{}")
-                mt.feed(str(payload.get("data", "")).encode("utf-8", "replace"))
+                try:
+                    n = int(self.headers.get("Content-Length", 0))
+                    payload = json.loads(self.rfile.read(max(n, 0)) or b"{}")
+                    data = str(payload.get("data", ""))
+                except (ValueError, AttributeError):
+                    self.send_response(400)
+                    self.end_headers()
+                    return
+                mt.feed(data.encode("utf-8", "replace"))
                 self.send_response(200)
                 self.end_headers()
             else:

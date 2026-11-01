@@ -17,6 +17,7 @@ import numpy as np
 
 from chipformer.rv import core, elf, ref
 from chipformer.rv import fastexec
+from chipformer.rv import spec as S_
 from chipformer.q35.ir import A_BIT, A_REF, HD, REF_COLS
 
 
@@ -100,7 +101,6 @@ def main() -> int:
         x = ex.embed([tok])
         resid = ex.step(x)[0].double().cpu().numpy()
         tok = core.predictions(c, resid[None, :])[0]
-        from chipformer.rv import spec as S_
         fam, p = S_.family(tok) if tok < S_.VOCAB else ("?", 0)
         if fam == "BYTE" and p < 256:
             out.append(p)
