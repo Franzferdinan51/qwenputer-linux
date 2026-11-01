@@ -180,6 +180,32 @@ def resolve_decider(s):
         want, ", ".join(ids)[:120])
 
 
+def decider_chat(messages, max_tokens=256, timeout=30):
+    """One non-streaming question to the opt-in decision model.
+    Returns {"ok": True, "text": ...} or {"ok": False, "error": ...}.
+    Fails closed: off, unconfigured, or unreachable never falls back
+    to the seat - the caller gets the error and decides."""
+    if not messages:
+        return {"ok": False, "error": "no messages"}
+    s = load_settings()
+    model, err = resolve_decider(s)
+    if err or not model:
+        return {"ok": False, "error": "decider off: %s" % (err or "no model")}
+    req = json.dumps({"model": model, "messages": messages,
+                      "temperature": 0, "max_tokens": max_tokens}).encode()
+    try:
+        rq = urllib.request.Request(
+            s["decider_url"].rstrip("/") + "/v1/chat/completions",
+            data=req, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(rq, timeout=timeout) as r:
+            j = json.load(r)
+        text = (j.get("choices") or [{}])[0].get("message", {}).get(
+            "content") or ""
+        return {"ok": True, "text": text.strip(), "model": model}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 def tail(path, n=6000):
     try:
         with open(path, "rb") as f:
@@ -1155,8 +1181,11 @@ guest CPU/RAM from its <code>/proc</code> &mdash; never the host.
 <label>decision model id (the exact id loaded there, e.g. liquidai/d1-omni-600m)</label>
 <input type="text" id="s-decidermodel">
 <p class="dim">leave this off for fused/GGUF single-model setups: with no
-sidecar running, enabling it only produces errors. nothing uses the
-decider yet &mdash; this setting just verifies it is reachable.</p>
+sidecar running, enabling it only produces errors. any OpenAI-compatible
+chat model works here &mdash; load one in LM Studio and point this at it.</p>
+<p><input type="text" id="s-deciderask" placeholder="ask the decider a yes/no question&hellip;" style="width:60%">
+<button class="ghost" id="askdecider">Ask decider</button></p>
+<pre class="dim" id="deciderout" style="white-space:pre-wrap;min-height:16px"></pre>
 <p><button class="act" id="save" style="padding:10px 22px">Save settings</button>
 <button class="ghost" id="testbe">Test backend</button>
 <button class="ghost" id="testdecider">Test decider</button>
@@ -1672,6 +1701,16 @@ $('testdecider').onclick=async()=>{
  }catch(e){$('saved').textContent='FAILED: '+e;}
  setTimeout(()=>{if($('saved').textContent.startsWith('ok'))$('saved').textContent='';},4000);
 };
+$('askdecider').onclick=async()=>{
+ const q=$('s-deciderask').value.trim();if(!q)return;
+ $('deciderout').textContent='asking\u2026';
+ try{const r=await fetch('/api/decide',{method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({prompt:q})});
+  const j=await r.json();
+  $('deciderout').textContent=j.ok?j.text:('FAILED: '+(j.error||'no answer'));
+ }catch(e){$('deciderout').textContent='FAILED: '+e;}
+};
 function termURL(){return 'http://'+location.hostname+':8951/';}
 $('termopen').onclick=()=>window.open(termURL(),'_blank');
 $('termreload').onclick=()=>{$('term').src=termURL();};
@@ -1791,6 +1830,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_traces_now())
         elif self.path == "/api/upkeep":
             self._json(_set_upkeep(bool(body.get("paused", True))))
+        elif self.path == "/api/decide":
+            msgs = body.get("messages")
+            if msgs is None and body.get("prompt"):
+                msgs = [{"role": "user", "content": body["prompt"]}]
+            try:
+                mtok = max(1, min(1024, int(body.get("max_tokens", 256))))
+            except Exception:
+                mtok = 256
+            self._json(decider_chat(msgs or [], mtok))
         else:
             self._json({"error": "not found"}, 404)
 

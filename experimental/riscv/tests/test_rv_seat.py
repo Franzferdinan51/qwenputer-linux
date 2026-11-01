@@ -263,5 +263,70 @@ def test_save_settings_coerces_decider_enabled(tmp_path, monkeypatch):
 
 def test_dashboard_page_has_decider_controls():
     for cid in ("s-decider", "s-deciderurl", "s-decidermodel",
-                "testdecider", "deciderstat"):
+                "testdecider", "deciderstat", "s-deciderask",
+                "askdecider", "deciderout"):
         assert ('id="%s"' % cid) in D.PAGE, cid
+
+
+def _decider_settings(tmp_path, monkeypatch, **over):
+    monkeypatch.setattr(D, "SETTINGS_PATH", str(tmp_path / "s.json"))
+    s = dict(D.DEFAULTS)
+    s.update(decider_enabled=True,
+             decider_url="http://127.0.0.1:1",
+             decider_model="liquidai/d1-omni-600m")
+    s.update(over)
+    with open(D.SETTINGS_PATH, "w") as f:
+        json.dump(s, f)
+
+
+def _chat_urlopen(payload=None, exc=None):
+    def fake_urlopen(req, timeout=None):
+        url = req.full_url if hasattr(req, "full_url") else req
+        if url.endswith("/v1/models"):
+            return _FakeResp({"data": [{"id": "liquidai/d1-omni-600m"}]})
+        if exc is not None:
+            raise exc
+        fake_urlopen.bodies.append(json.loads(req.data))
+        return _FakeResp(payload)
+    fake_urlopen.bodies = []
+    return fake_urlopen
+
+
+def test_decider_chat_off_fails_closed_no_probe(tmp_path, monkeypatch):
+    _decider_settings(tmp_path, monkeypatch, decider_enabled=False)
+
+    def boom(req, timeout=None):
+        raise AssertionError("must not probe when off")
+    monkeypatch.setattr(D.urllib.request, "urlopen", boom)
+    r = D.decider_chat([{"role": "user", "content": "go?"}])
+    assert r["ok"] is False and "off" in r["error"]
+
+
+def test_decider_chat_empty_messages_never_probes(tmp_path, monkeypatch):
+    _decider_settings(tmp_path, monkeypatch)
+
+    def boom(req, timeout=None):
+        raise AssertionError("must not probe with no messages")
+    monkeypatch.setattr(D.urllib.request, "urlopen", boom)
+    r = D.decider_chat([])
+    assert r["ok"] is False and "no messages" in r["error"]
+
+
+def test_decider_chat_pins_model_and_zero_temp(tmp_path, monkeypatch):
+    _decider_settings(tmp_path, monkeypatch)
+    fake = _chat_urlopen({"choices": [{"message": {"content": " yes "}}]})
+    monkeypatch.setattr(D.urllib.request, "urlopen", fake)
+    r = D.decider_chat([{"role": "user", "content": "go?"}])
+    assert r == {"ok": True, "text": "yes",
+                 "model": "liquidai/d1-omni-600m"}
+    assert fake.bodies[0]["model"] == "liquidai/d1-omni-600m"
+    assert fake.bodies[0]["temperature"] == 0
+
+
+def test_decider_chat_unreachable_fails_closed(tmp_path, monkeypatch):
+    _decider_settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        D.urllib.request, "urlopen",
+        _chat_urlopen(exc=OSError("refused")))
+    r = D.decider_chat([{"role": "user", "content": "go?"}])
+    assert r["ok"] is False and "refused" in r["error"]

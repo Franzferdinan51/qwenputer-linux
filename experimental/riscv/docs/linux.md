@@ -287,6 +287,22 @@ then answers the user from the report. Up to 3 delegations per
 message; if the terminal is offline the model is told so and
 answers honestly. Plain conversation never touches the guest.
 
+**Decision model sidecar (optional, off by default).** Settings can
+enable a second, smaller model for fast yes/no judgments — a sidecar
+seat next to the main brain. It speaks plain OpenAI-compatible chat,
+so anything LM Studio can serve works: load a small instruct model
+there, keep the default URL (`http://127.0.0.1:1234`), type the exact
+model id, and Test decider proves it is reachable. The Ask box tries
+one question; scripts and the guest can ask via
+`POST /api/decide` (`{"prompt": "..."}` or `{"messages": [...]}` →
+`{"ok": true, "text", "model"}` or `{"ok": false, "error"}`).
+When off — the default — nothing probes it, so fused/GGUF
+single-model setups are unaffected; when on but unreachable it
+errors loudly instead of silently borrowing the main seat. Note:
+purpose-built decision models that are not chat models (e.g.
+Liquid's d1 family) need their own server — LM Studio only serves
+chat-completion models.
+
 ### Running it on the circuit itself
 
 Everything above runs the guest on a host-side machine (reference or
