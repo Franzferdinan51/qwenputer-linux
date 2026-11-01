@@ -542,6 +542,7 @@ async function send(){
     $('msgs').scrollTop=1e9;
    }
    if(fin){try{await rd.cancel();}catch(e){}break;}
+  }
  }catch(e){if(e.name!=='AbortError')body.textContent='[connection error] '+e;
   else if(!content)body.textContent='(stopped)';}
  clearInterval(iv);
