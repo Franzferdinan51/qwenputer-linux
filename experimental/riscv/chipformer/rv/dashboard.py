@@ -600,8 +600,8 @@ code{background:var(--code);padding:1px 6px;border-radius:5px}
 <canvas id="viz" width="900" height="250"></canvas>
 <p class="dim" id="vizlegend">warming up&hellip;</p>
 <p class="dim">left: the brain thinking (amber). right: the live
-computer &mdash; guest linux, running on these same open weights
-through the seat (blue). pulses are real work: amber flows
+computer &mdash; guest linux on the fast native core, borrowing
+the brain through the seat (blue). pulses are real work: amber flows
 brain&nbsp;&rarr;&nbsp;computer when a job is handed over, blue
 flows back when the computer reports. nothing here is decoration:
 when nothing moves, nothing happened.</p></div>
@@ -866,7 +866,7 @@ function drawViz(){rot+=.0035;vctx.clearRect(0,0,900,250);
  draw(chipPts,665,118,15,'#57c7ff');
  vctx.fillStyle='#9aa7b5';vctx.font='12px sans-serif';
  vctx.fillText('BRAIN \u2014 qwen 3.5 4b, the seat',140,240);
- vctx.fillText('COMPUTER \u2014 guest linux, same weights',520,240);
+ vctx.fillText('COMPUTER \u2014 linux, fast core + Qwen brain',520,240);
  viz.pulses=viz.pulses.filter(p=>p.t<=1);
  for(const p of viz.pulses){p.t+=p.sp;
   const a=proj(p.a,225,118,64),b=proj(p.b,665,118,15);
