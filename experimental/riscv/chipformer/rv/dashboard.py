@@ -1008,7 +1008,7 @@ guest's own mind <span id="mindage"></span> &mdash;
 <h3 style="font-size:14px;letter-spacing:.05em;color:var(--acc)">GUEST ENTRY POINTS</h3>
 <p style="color:var(--dim)">these run in the guest &mdash; tap one to
 open the terminal.</p>
-<div class="cards" id="apps"></div>
+<div class="cards" id="entryapps"></div>
 <h3 style="font-size:14px;letter-spacing:.05em;color:var(--acc)">RUNS UPSTREAM, NOT HERE</h3>
 <div class="cards" id="upstream"></div></section>
 <section id="system" class="tab">
@@ -1115,7 +1115,7 @@ const UPSTREAM=[['\u03bb','MicroPython on the CPU','Python running on the Qwenpu
 ['\u25e9','Doom port','the Doom port that proved the display path — on the circuit-grown-map branch, not in this tree.','github.com/divagr18/qwenputer'],
 ['\u25c8','bare-metal agent','agent.c — the harness compiled for the circuit itself: store / recall / mul through the mailbox in RAM. source ships in this tree (env/progs/agent.c), runs via bareagent.py on the circuit.','env/progs/agent.c']];
 function escH(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-$('apps').innerHTML=APPS.map((a,i)=>'<div class="app"><div><span class="ico">'
+$('entryapps').innerHTML=APPS.map((a,i)=>'<div class="app"><div><span class="ico">'
  +a[0]+'</span><b>'+escH(a[1])+'</b></div><span>'+escH(a[2])+'</span><span><code>'
  +escH(a[3])+'</code></span><div class="row">'
  +'<button class="btnsm" data-term="'+i+'">open in terminal</button>'

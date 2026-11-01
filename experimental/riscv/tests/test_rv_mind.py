@@ -229,7 +229,9 @@ def test_settings_new_keys_roundtrip(tmp_path, monkeypatch):
 def test_page_id_contract_and_tabs():
     import re
     need = set(re.findall(r"\$\('([^']+)'\)", DB.PAGE))
-    have = set(re.findall(r'id="([^"]+)"', DB.PAGE))
+    ids = re.findall(r'id="([^"]+)"', DB.PAGE)
+    assert len(ids) == len(set(ids)), "duplicate ids break getElementById"
+    have = set(ids)
     assert need - have == set()
     for tab in ("overview", "chat", "terminal", "desktop", "apps",
                 "system", "settings"):
