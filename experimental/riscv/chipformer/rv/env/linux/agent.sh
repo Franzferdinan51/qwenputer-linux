@@ -44,8 +44,19 @@ qwen_ask() {
   # the prompt must go to the CONSOLE, not stdout: this function is called
   # inside $(...), where stdout is the capture pipe
   printf 'QWEN:%s\n' "$1" > /dev/console
-  IFS= read -r _ans
-  printf '%s' "$_ans"
+  # the host marks its typed answers QWENANS: - anything else on the
+  # console line is a human typing mid-session; never mistake it for
+  # the model's reply (that ended a live session on 2026-10-31).
+  _tries=0
+  while [ $_tries -lt 6 ]; do
+    IFS= read -r _ans || { printf ''; return; }
+    case "$_ans" in
+      QWENANS:*) printf '%s' "${_ans#QWENANS:}"; return ;;
+      *) _tries=$((_tries + 1))
+         printf '[agent] ignored a console line that was not a model reply\n' > /dev/console ;;
+    esac
+  done
+  printf ''
 }
 
 deny() {
@@ -119,6 +130,18 @@ while [ $round -lt 9 ]; do
   # an empty answer in 1 round
   [ -z "$(printf '%s' "$ans" | tr -d ' \t')" ] && ans="[qwen: empty answer]"
   echo "[agent] model: $ans"
+
+  # task-echo guard: the plain base brain sometimes answers by
+  # repeating the task back under its own "TASK:" label instead of
+  # doing it (seen live 2026-10-31: reply was the task text itself,
+  # and the catch-all delivered it as the final answer). An echo is
+  # not an answer - nudge and redraw; the round cap still bounds it.
+  case "$ans" in
+    "TASK: "*)
+      echo "[agent] task echo blocked - nudging"
+      prompt="$SYS TASK: $task RESULT: (you repeated the task back - that is not doing it. Send the FIRST tool call for this task now, exactly one line: a TOOL verb, or SAY: <answer> if no tool is needed)"
+      continue ;;
+  esac
 
   # the reflection turn's reply is handled by the same verb machinery;
   # whatever it says, afterwards we deliver the stashed final answer

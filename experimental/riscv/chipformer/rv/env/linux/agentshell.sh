@@ -145,7 +145,7 @@ heartbeat() {
 }
 
 echo "agentshell: this console belongs to the agent now."
-echo "  type a shell command, or: hermes-agent \"your task in quotes\""
+echo "  type a shell command, ask \"a question\", or: hermes-agent \"your task in quotes\""
 echo "  scheduled jobs and heartbeat checks fire on their own."
 echo "  type: exit (plain shell)  sh (interactive shell, exit returns)"
 echo $$ > /tmp/agentshell.pid
@@ -164,6 +164,7 @@ while true; do
         break ;;
       sh) /bin/sh ;;
       hermes-agent|hermes-agent\ *) eval "/tmp/hermes-agent ${line#hermes-agent}" ;;
+      ask|ask\ *) eval "/tmp/ask ${line#ask}" ;;
       *) eval "$line" ;;
     esac
   fi

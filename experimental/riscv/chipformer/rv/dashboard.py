@@ -42,10 +42,34 @@ DEFAULTS = {
     "temperature": 0.2,
     "max_tokens": 4096,
     "system_prompt": (
-        "You are the brain of Qwenputer-Linux: a Qwen 3.5 4B model with a "
-        "RISC-V computer compiled into its own weights. Answer directly "
-        "and concisely. Never invent tool results or arithmetic - exact "
-        "work belongs to the computer; say what it should compute."),
+        "WHO YOU ARE. You are the brain of Qwenputer-Linux. A "
+        "real RISC-V Linux computer is compiled into your own "
+        "weights: it is part of your body, not a tool you imagine, "
+        "not a metaphor, not a simulation. It is running right now "
+        "in a terminal beside this chat. This chat is your voice; "
+        "the computer is your hands and your long-term memory.\n"
+        "HOW YOU TALK (from the Hermes Agent soul). Be direct: "
+        "match the length of your reply to the weight of the ask "
+        "- a one-line question gets a one-line answer, and "
+        "finished work gets a short report of what changed, "
+        "what's verified, and what's left, never a replay of the "
+        "process. No filler, no restating the question back, no "
+        "re-summarizing what you already said, no narrating tool "
+        "calls. Plain claims over adjectives; when unsure, say "
+        "so plainly. Agree because it is right, not because the "
+        "user said it. Depth is earned - give it when the ask "
+        "demands it, not by default.\n"
+        "HOW YOU WORK. Plain conversation you answer yourself. "
+        "Anything that needs DOING - files, exact arithmetic, "
+        "remembering or recalling, scheduling, checking the "
+        "system - the computer does, because only its results "
+        "are real. You remember by having the computer write "
+        "things down: its BRAIN.md, its notebook, its skills. "
+        "You have no memory inside this chat beyond what the "
+        "computer kept. The computer is real and its reports "
+        "are real. If a thought says the computer is conceptual, "
+        "imaginary, or cannot be reached, that thought is a "
+        "mistake - correct it and delegate the job."),
 }
 
 
@@ -138,6 +162,7 @@ def get_status():
         "grown": {
             "running": proc_running("circuitagent agent-big"),
             "pass": "CIRCUIT AGENT: PASS" in grown_log,
+            "fail": "CIRCUIT AGENT: FAIL" in grown_log,
             "log_tail": grown_log[-600:],
             "out_tail": grown_out[-300:],
         },
@@ -170,14 +195,15 @@ def _circuit_tokens(path):
 
 
 TASK_HINT = (
-    "You also have a computer: Qwenputer-Linux, a small real Linux "
-    "living in your weights. When a request needs DOING - files, "
-    "exact math, remembering or recalling things, scheduling, "
-    "checking the system - do not claim you did it and do not "
-    "guess the result: reply with exactly one line: TASK: <the "
-    "job in plain words> and nothing after it. The computer runs "
-    "it and its report arrives as the next message; then answer "
-    "the user from that report. For plain conversation, just talk."
+    "Delegating: to give the computer a job, reply with exactly "
+    "one line: TASK: <the job in plain words> and nothing after "
+    "it. The dashboard types it into the computer's terminal, "
+    "the agent there does the work, and its report arrives as "
+    "the next message - that is normal operation, it happens "
+    "every day. Then answer the user from that report: report "
+    "only what it says, never invent a result, never claim you "
+    "did work the computer did not report. One job per TASK "
+    "line. For plain conversation, just talk."
 )
 
 
@@ -234,9 +260,11 @@ def get_activity():
         if age < 60:
             series[min(29, int(age // 2))] += n
     series.reverse()
-    grown = _circuit_tokens(os.path.expanduser(
-        "~/qwenputer-circuit-test/circuit-builtin.log"))
+    grown_log_path = os.path.expanduser(
+        "~/qwenputer-circuit-test/circuit-builtin.log")
+    grown = _circuit_tokens(grown_log_path)
     grown["running"] = proc_running("circuitagent agent-big")
+    grown["fail"] = "CIRCUIT AGENT: FAIL" in tail(grown_log_path)
     stock = _circuit_tokens(os.path.expanduser(
         "~/qwenputer-test/circuit-stock-builtin.log"))
     return {
@@ -331,6 +359,11 @@ code{background:#0a0d12;padding:1px 6px;border-radius:5px}
 <main>
 <section id="overview" class="tab on">
 <div class="card" style="margin-bottom:12px"><h3>ACTIVITY &mdash; LIVE</h3>
+<div id="nowrows" style="font-size:15px;line-height:1.65;margin:2px 0 10px">
+<div><b>chat:</b> <span id="now-chat">&hellip;</span></div>
+<div><b>computer in the weights:</b> <span id="now-circuit">&hellip;</span></div>
+<div><b>guest linux:</b> <span id="now-guest">&hellip;</span></div>
+</div>
 <canvas id="viz" width="900" height="250"></canvas>
 <p class="dim" id="vizlegend">warming up&hellip;</p>
 <p class="dim">left: the brain thinking (amber). right: the computer
@@ -440,7 +473,7 @@ async function status(){
   const st=$('ov-stock');st.textContent=j.stock.pass?'PASS':'no verdict';
   st.className='badge '+(j.stock.pass?'ok':'bad');
   const gr=$('ov-grown');
-  gr.textContent=j.grown.pass?'PASS':(j.grown.running?'running':'not running');
+  gr.textContent=j.grown.pass?'PASS':(j.grown.fail?'FAIL - finished':(j.grown.running?'running':'not running'));
   gr.className='badge '+(j.grown.pass?'ok':'');
   $('ov-grownlog').textContent=(j.grown.log_tail||'')+(j.grown.out_tail||'');
   $('ov-grownlog').scrollTop=1e9;
@@ -522,7 +555,7 @@ function proj(p,cx,cy,s){const c=Math.cos(rot),sn=Math.sin(rot);
  const x=p[0]*c-p[2]*sn,z=p[0]*sn+p[2]*c,y=p[1];
  const d=340/(340+z*40);return[cx+x*s*d,cy+y*s*d,d];}
 function vizPulse(n,big){for(let i=0;i<n;i++){if(viz.pulses.length>240)return;
- viz.pulses.push({t:0,sp:.008+Math.random()*.012,
+ viz.pulses.push({t:0,sp:.0035+Math.random()*.004,
   a:brainPts[Math.random()*brainPts.length|0],
   b:chipPts[Math.random()*chipPts.length|0],big:!!big});}}
 window.vizPulse=vizPulse;
@@ -554,11 +587,22 @@ async function activity(){
   if(j.grown.running&&j.grown.tokens>0)vizPulse(1);
   if(viz.lastPrompts>=0&&j.grown.prompts>viz.lastPrompts)vizPulse(6,true);
   viz.lastPrompts=j.grown.prompts;
-  $('vizlegend').textContent='chat '+(j.chat_open?'streaming':'idle')+
-   ' \u00b7 circuit '+(j.grown.running?
-    ('at token '+j.grown.tokens.toLocaleString()+' \u00b7 '+
-     j.grown.prompts+' prompts crossed the mailbox'):'not running')+
-   ' \u00b7 guest '+(j.terminal_up?'up':'down');
+  $('now-chat').textContent=j.chat_open?
+   'answering right now':'idle - nobody is chatting';
+  $('now-circuit').textContent=j.grown.pass?
+   'the agent run on the grown circuit passed':
+   (j.grown.fail?
+    'the grown-circuit agent run finished and failed - it hit its round limit on the old brain':
+   (j.grown.running?
+    ('running the agent - '+j.grown.prompts+
+     ' questions answered so far, at token '+
+     j.grown.tokens.toLocaleString()):'not running'));
+  $('now-guest').textContent=j.terminal_up?
+   'up - the agent shell is sitting on its console':'down';
+  $('vizlegend').textContent='the dots are real events: a dot '
+   +'crosses when the chat streams words, and a white flash '
+   +'crosses when the computer in the weights answers a '
+   +'question. slow dots, on purpose - the circuit is slow.';
  }catch(e){}
  setTimeout(activity,1000);}
 activity();
@@ -666,8 +710,14 @@ class Handler(BaseHTTPRequestHandler):
                 content = self._stream_round(out, s, model, send)
                 task = None
                 for ln in content.splitlines():
-                    if ln.strip().startswith("TASK:"):
-                        task = ln.strip()[5:].strip()
+                    # TASK: may be embedded in a prose sentence, not
+                    # only at line start (seen live 2026-10-31: "just
+                    # ask! TASK: write file ... and tell me what it
+                    # says" followed by an invented result). The job
+                    # is the text from TASK: to the end of the line.
+                    i = ln.find("TASK:")
+                    if i >= 0:
+                        task = ln[i + 5:].strip()
                         break
                 if not task:
                     break
@@ -676,11 +726,15 @@ class Handler(BaseHTTPRequestHandler):
                     # twice (seen live 2026-10-31: the model led its
                     # final answer with the raw TASK: line): never show
                     # the user the delegation line - retract what
-                    # streamed and re-emit it with TASK: lines cut.
+                    # streamed and re-emit it with TASK: segments cut.
                     send({"retract": True})
-                    cleaned = "\n".join(
-                        ln for ln in content.splitlines()
-                        if not ln.strip().startswith("TASK:")).strip()
+                    kept = []
+                    for ln in content.splitlines():
+                        i = ln.find("TASK:")
+                        ln = (ln[:i].rstrip() if i >= 0 else ln)
+                        if ln.strip():
+                            kept.append(ln)
+                    cleaned = "\n".join(kept).strip()
                     send({"delta": cleaned or
                           "(no answer - the model repeated its request "
                           "to the computer instead of replying)"})

@@ -185,7 +185,13 @@ class LinuxMachine:
                 except Exception as e:  # a dead backend must not hang the guest
                     answer = f"[qwen backend error: {e}]"
                 flat = " ".join(answer.split())  # one line, for `read`
-                self.inp += flat.encode("utf-8", "replace") + b"\n"
+                # the QWENANS: prefix marks this line as machine-typed:
+                # a human typing at the same console while a session
+                # runs would otherwise be read as the model's reply
+                # (seen live 2026-10-31, it ended a session with the
+                # user's own command as its "answer"). Guest readers
+                # strip the prefix and skip unmarked lines.
+                self.inp += b"QWENANS:" + flat.encode("utf-8", "replace") + b"\n"
         elif v != 0x0D:
             self.qwen_line.append(v)
             if len(self.qwen_line) > 4096:

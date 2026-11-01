@@ -12,6 +12,21 @@
 #
 # Usage: ask "your question"
 
+# Console answers arrive marked QWENANS: (the host prefixes the lines
+# it types, so a human typing at the same console mid-answer is never
+# mistaken for the model). Read until a marked line shows up.
+read_ans() {
+  ans=''
+  _t=0
+  while [ $_t -lt 6 ]; do
+    IFS= read -r _l || return
+    case "$_l" in
+      QWENANS:*) ans="${_l#QWENANS:}"; return ;;
+      *) _t=$((_t + 1)) ;;
+    esac
+  done
+}
+
 if command -v devmem >/dev/null 2>&1; then
   QW=0x10010000
   for b in $(printf '%s' "$1" | od -An -tu1); do
@@ -41,7 +56,7 @@ elif [ -c /dev/mem ]; then
   echo
 else
   printf 'QWEN:%s\n' "$1"
-  IFS= read -r ans
+  read_ans
   # Delegation: when the host bridge is on (qwenbackend.agent_bridge),
   # the model in the seat may answer with a [[RUN-AGENT: ...]] marker
   # instead of an answer - meaning "let the machine's own hermes-agent
@@ -57,7 +72,7 @@ else
       [ -z "$rep" ] && rep="(the hermes agent produced no answer)"
       echo "[ask] hermes-agent reported: $rep"
       printf 'QWEN:%s HERMES REPORT: %s\n' "$1" "$rep"
-      IFS= read -r ans
+      read_ans
       ;;
   esac
   printf 'QWEN_ANSWER: %s\n' "$ans"

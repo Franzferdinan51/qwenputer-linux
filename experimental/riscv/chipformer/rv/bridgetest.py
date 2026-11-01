@@ -17,6 +17,7 @@ the verdict lines say which parts happened.
 """
 
 import argparse
+import hashlib
 import time
 from pathlib import Path
 
@@ -28,6 +29,26 @@ ASK = (HERE / "env" / "linux" / "ask.sh").read_text()
 AGENT = (HERE / "env" / "linux" / "agent.sh").read_text()
 QUESTION = ('create a file named /tmp/deep.txt containing the word '
             'banana, then tell me what the file says')
+INSTALL = (
+    "cat > /tmp/ask <<'QWEOF'\n" + ASK + "QWEOF\n"
+    "cat > /tmp/agent <<'QWEOF'\n" + AGENT + "QWEOF\n"
+    "cp /tmp/agent /tmp/hermes-agent\n"
+    "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
+)
+VERIFY = b"md5sum /tmp/ask /tmp/agent; echo MD5\"CHK\"\n"
+HASHES = [hashlib.md5(ASK.encode()).hexdigest().encode(),
+          hashlib.md5(AGENT.encode()).hexdigest().encode()]
+
+
+def units_of(text: str):
+    """Line-paced feed units (see agenttest.units_of): one unit in
+    flight, released by its own echo - blind chunk feeding tears
+    heredocs on this guest tty."""
+    units = []
+    for line in text.splitlines(keepends=True):
+        b = line.encode()
+        units += [b[i:i + 256] for i in range(0, len(b), 256)] or [b""]
+    return units
 
 
 class ScriptedSeat:
@@ -75,7 +96,7 @@ def main() -> int:
         from chipformer.rv.snapshot import load as snap_load
         m = snap_load(args.snapshot)
         m.on_qwen_prompt = backend
-        script = f'/tmp/ask "{QUESTION}"\n'.encode()
+        chunks = units_of(f'/tmp/ask "{QUESTION}"\n')
         _warm = True
     else:
         _warm = False
@@ -88,20 +109,17 @@ def main() -> int:
             m.on_qwen_prompt = backend
             m.load_image(Path(args.image).read_bytes())
             m.boot(Path(args.dtb).read_bytes())
-
-        script = (
-            "cat > /tmp/ask <<'QWEOF'\n" + ASK + "QWEOF\n"
-            "cat > /tmp/agent <<'QWEOF'\n" + AGENT + "QWEOF\n"
-            "cp /tmp/agent /tmp/hermes-agent\n"
-            "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent\n"
-            "echo STAGE_BRIDGE\n"
-            f'/tmp/ask "{QUESTION}"\n'
-        ).encode()
-    chunks = [script[i:i + 256] for i in range(0, len(script), 256)]
+        chunks = units_of(INSTALL)
     logf = open(args.log, "wb") if args.log else None
     logged = 0
     phase = 2 if _warm else 0
     phase_slice = 0
+    last_feed_slice = 0
+    unit = None
+    unit_mark = 0
+    verify_mark = 0
+    retries = 0
+    install_failed = False
     fed = set()
     t0 = time.time()
     slices = 0
@@ -131,10 +149,41 @@ def main() -> int:
             if b"CANARY_42" in out:
                 phase = 2
         elif phase == 2:
-            if chunks:
-                m.feed_input(chunks.pop(0))
-            else:
+            # line-paced feeding, one unit in flight (see agenttest)
+            if unit is not None:
+                if len(out) - unit_mark >= len(unit) - 4 \
+                        or slices - last_feed_slice >= 200:
+                    unit = None
+            elif chunks:
+                unit = chunks.pop(0)
+                m.feed_input(unit)
+                unit_mark = len(out)
+                last_feed_slice = slices
+            elif _warm:
                 phase = 3
+            else:
+                verify_mark = len(out)
+                m.feed_input(VERIFY)
+                phase = 25
+        elif phase == 25:
+            # the guest's own md5sums decide; a torn install retries
+            tail = out[verify_mark:]
+            if b"MD5CHK" in tail:
+                if all(h in tail for h in HASHES):
+                    print("[bridgetest] install verified byte-exact "
+                          "in the guest", flush=True)
+                    m.feed_input(b"echo STAGE_BRIDGE\n")
+                    m.feed_input(f'/tmp/ask "{QUESTION}"\n'.encode())
+                    phase = 3
+                elif retries < 3:
+                    retries += 1
+                    print(f"[bridgetest] install torn (retry {retries})",
+                          flush=True)
+                    chunks = units_of(INSTALL)
+                    phase = 2
+                else:
+                    install_failed = True
+                    break
         elif phase == 3:
             if b"\nQWEN_ANSWER:" in out:
                 m.feed_input(b"cat /tmp/deep.txt | od -c | head -1; echo CAT\"DONE\"\n")
@@ -156,7 +205,8 @@ def main() -> int:
           f"mode={'live' if args.live else 'scripted'} ===")
     print("BRIDGE:", "PASS" if ok else
           f"FAIL (delegated={delegated} answer_has_banana={answer_ok} "
-          f"file_content_verified={file_ok})")
+          f"file_content_verified={file_ok} "
+          f"install_failed={install_failed})")
     return 0 if ok else 1
 
 

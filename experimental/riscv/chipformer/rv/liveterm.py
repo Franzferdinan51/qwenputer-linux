@@ -31,6 +31,13 @@ HERE = Path(__file__).parent
 ASK_SH = (HERE / "env" / "linux" / "ask.sh").read_text()
 AGENT_SH = (HERE / "env" / "linux" / "agent.sh").read_text()
 ASHELL_SH = (HERE / "env" / "linux" / "agentshell.sh").read_text()
+# The guest's soul: env/linux/SOUL.md - the Hermes Agent SOUL.md
+# (Nous Research) re-homed for this machine; seeded into the
+# guest at /root/SOUL.md and folded into wake-up prompts by
+# agent.sh (first ~300 chars carry identity + directness).
+SOUL_MD = (HERE / "env" / "linux" / "SOUL.md").read_text()
+if not SOUL_MD.endswith("\n"):
+    SOUL_MD += "\n"
 
 PAGE = """<!doctype html>
 <meta charset="utf-8">
@@ -138,7 +145,7 @@ class MachineThread(threading.Thread):
             "cp /tmp/agentshell /root/agentshell\n"
             "chmod +x /tmp/ask /tmp/agent /tmp/hermes-agent /tmp/agentshell\n"
             "mkdir -p /root/nb /root/skills /root/apps\n"
-            "[ -f /root/SOUL.md ] || printf 'You are the agent inside Qwenputer-Linux: a small computer living in the weights of Qwen 3.5 4B. You work through tools, remember what matters, schedule what matters later, and build yourself small apps for the things you are bad at.\\n' > /root/SOUL.md\n"
+            "[ -f /root/SOUL.md ] || cat > /root/SOUL.md <<'QWEOF'\n" + SOUL_MD + "QWEOF\n"
             "echo ASK_READY the agentshell takes the console now: shell commands and hermes-agent tasks run there, scheduled jobs fire on their own, exit returns here\n"
             "/tmp/agentshell\n"
         ).encode()

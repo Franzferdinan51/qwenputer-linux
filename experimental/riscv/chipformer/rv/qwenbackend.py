@@ -70,7 +70,8 @@ def lmstudio_backend(base_url: str | None = None, proxy: str | None = None,
             "temperature": float(os.environ.get("QWEN_TEMP", "0.7")),
             "max_tokens": int(os.environ.get("QWEN_MAX_TOKENS", "220")),
         }, timeout=600)
-        return out["choices"][0]["message"]["content"].strip() or "[qwen: empty answer]"
+        content = out["choices"][0]["message"].get("content") or ""
+        return content.strip() or "[qwen: empty answer]"
 
     ask.model = model  # for the runner's log line
     return ask

@@ -107,7 +107,13 @@ class FastLinuxMachine:
                 answer = str(self.on_qwen_prompt(prompt))
             except Exception as e:  # mirror the oracle: never hang the guest
                 answer = f"[qwen backend error: {e}]"
-        data = answer.encode("utf-8", "replace")
+        # mirror the oracle exactly: flatten to one line (a multi-line
+        # answer would leave residue lines queued as the NEXT prompt's
+        # "reply") and mark it machine-typed with the QWENANS: prefix,
+        # so guest readers can tell it from a human typing at the same
+        # console (see linux.py).
+        flat = " ".join(str(answer).split())
+        data = ("QWENANS:" + flat).encode("utf-8", "replace")
         with self._wlock:
             self._cmd.write(b"ANS %d\n" % len(data) + data)
 
