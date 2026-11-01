@@ -23,12 +23,19 @@
 #   TOOL saveapp <name> :: <one-line shell program>   (gap prosthetic)
 #   TOOL app <name> <args>        run one of its own apps
 #   TOOL apps                     list its apps
+#   TOOL forget <words>           drop memory lines matching <words>
+#   TOOL delegate <subtask>       run one fenced sub-agent, get its report
+#   TOOL plan :: <s1; s2; s3>     write a step plan (pending steps persist)
+#   TOOL plan done <n>            mark plan step n done (show/clear too)
+#   TOOL fetch <http(s) URL>      fetch a page through the host bridge
+#   THINK: <thought>              private scratchpad - thinking, not acting
 #   SAY: <answer>                 finish
 #
 # Self-learning (Hermes' closed loop, shrunk): a task that took real
-# work (>=4 tool calls, or a failure then a recovery) earns ONE
-# reflection turn before the answer is delivered - the harness asks
-# what is worth keeping, as a skill or a remembered fact.
+# work (>=4 tool calls, or a failure then a recovery) earns a critique
+# turn and a revise turn before the answer is delivered - what is
+# unverified gets fixed - plus the usual what-is-worth-keeping (a
+# skill or a remembered fact).
 #
 # Usage: hermes-agent "your task in quotes"
 # Example: hermes-agent "write hello into /tmp/hi.txt"
@@ -45,6 +52,8 @@
 SYS='Answer with exactly one line, no explanation. Verbs: TOOL run <busybox command> - run a command, you get its output as RESULT. TOOL remember <fact> - keep a fact in your long-term memory. TOOL recall <words> - search your memory, notebook and history. TOOL schedule <minutes> <task> - do a task later; TOOL schedule every <minutes> <task> repeats it. TOOL jobs / TOOL unschedule <n>. TOOL saveskill <name> :: <procedure> - save how to do something, so future you knows; TOOL skill <name> loads one back; check TOOL skills before inventing an approach. TOOL saveapp <name> :: <one-line shell program> - build yourself a small app when you hit a gap (bad at something? make a tool for it once, use it forever); TOOL app <name> <args> runs it; TOOL apps lists them.'
 SYS="$SYS"' SAY: <answer> - finish, and SAY only reports what a RESULT showed you. Claiming is not doing: remembering, saving and building happen ONLY through their TOOL verbs - if you did not send the verb, it did not happen. You have a whole linux system: files persist, agentshell runs your scheduled jobs, your memory is /root/BRAIN.md, notebook /root/nb. Examples - task "multiply 123456789 by 987654321 exactly": TOOL run echo $((123456789 * 987654321)). Task "check the disk every 30 minutes": TOOL schedule every 30 check disk space with df and remember the result. Task "remember my favorite fruit is kiwi": TOOL remember the favorite fruit is kiwi. Task "make /tmp/hi.txt containing hello, then read it back": TOOL run echo hello > /tmp/hi.txt and after the result TOOL run cat /tmp/hi.txt then SAY: what the file says.'
 SYS="$SYS"' Helpers: TOOL run nb add <note> keeps a dated notebook note, TOOL run nb search <words> finds notes back; TOOL run calc <integer expression> does exact arithmetic.'
+SYS="$SYS"' Memory sections: tag facts [fact] [pref] [lesson] or [project:name] (untagged saves as [fact]); TOOL recall in:lesson <words> searches one section; TOOL forget <words> drops matching memory lines.'
+SYS="$SYS"' THINK: <thought> thinks out loud (max 6 a session, not an action). TOOL delegate <subtask> runs one fenced sub-agent and returns its report (one level only). TOOL plan :: s1; s2; s3 writes steps, TOOL plan done <n> checks one off, pending steps ride along until done. TOOL fetch <url> fetches an http(s) page through the host.'
 
 qwen_ask() {
   # the prompt must go to the CONSOLE, not stdout: this function is called
@@ -87,9 +96,27 @@ deny() {
   return 1
 }
 
+plan_pending() {
+  # pending (unchecked) plan steps, one capped line - these ride along
+  # in every prompt so a plan survives round caps and sessions; a new
+  # session sees the old plan's leftovers and can resume them
+  [ -s "$PLANF" ] || return 0
+  grep -e '^- \[ \]' "$PLANF" 2>/dev/null | sed 's/^- \[ \] //' | tr '\n' ';' | head -c 200
+}
+
 result_prompt() {
   prev_out="$1"
   prompt="$SYS TASK: $task RESULT: $1 Now reply with EXACTLY ONE line: a TOOL verb or SAY: <final answer>"
+  pp=$(plan_pending)
+  [ -n "$pp" ] && prompt="$prompt Pending plan steps: $pp"
+}
+
+log_failure() {
+  # failures are memory too: one dated line each, self-trimmed, folded
+  # back into every wake-up as PITFALLS so sessions stop repeating them
+  echo "$(date) | $task => $1" >> /root/FAILURES.md
+  n=$(wc -l < /root/FAILURES.md)
+  if [ "$n" -gt 50 ]; then tail -30 /root/FAILURES.md > /root/FAILURES.md.tmp && mv /root/FAILURES.md.tmp /root/FAILURES.md; fi
 }
 
 clean_name() {
@@ -115,6 +142,13 @@ short() {
 task="$*"
 [ -z "$task" ] && { echo 'usage: hermes-agent "your task in quotes"'; echo 'example: hermes-agent "write hello into /tmp/hi.txt"'; exit 1; }
 
+# sub-agent depth (TOOL delegate): a child shares its parent's console
+# lock instead of taking its own (nested console sessions already work
+# - ask.sh runs the agent as a child the same way); it gets a shorter
+# round budget and a private plan file, and it may not delegate further.
+DEPTH=${AGENT_DEPTH:-0}
+if [ "$DEPTH" -ge 1 ]; then PLANF=/tmp/PLAN.$$; else PLANF=/root/PLAN.md; fi
+
 # one agent at a time: the console protocol is a single queue, two
 # loops would interleave prompts and answers into mush. agentd sets
 # AGENTD=1 and defers when busy; a human's run waits a little. The
@@ -131,6 +165,7 @@ try_lock() {
   mkdir /tmp/agent.lockdir 2>/dev/null && return 0
   takeover_stale 2>/dev/null && mkdir /tmp/agent.lockdir 2>/dev/null
 }
+if [ "$DEPTH" -eq 0 ]; then
 if ! try_lock; then
   if [ -n "$AGENTD" ]; then
     echo "AGENT_BUSY"
@@ -148,19 +183,32 @@ if ! try_lock; then
   fi
 fi
 echo $$ > /tmp/agent.lockdir/pid
+fi
 : > /tmp/agent.runs.$$
-trap 'rm -rf /tmp/agent.lockdir; rm -f /tmp/agent.runs.$$' EXIT INT TERM
+: > /tmp/agent.think.$$
+if [ "$DEPTH" -eq 0 ]; then
+trap 'rm -rf /tmp/agent.lockdir; rm -f /tmp/agent.runs.$$ /tmp/agent.think.$$' EXIT INT TERM
+else
+trap 'rm -f /tmp/agent.runs.$$ /tmp/agent.think.$$ /tmp/PLAN.$$' EXIT INT TERM
+fi
 
 mkdir -p /root/nb /root/skills /root/apps
 # wake-up context: identity + curated memory fold into the first
 # prompt only, size-capped (Hermes keeps memory small on purpose -
 # curation over bulk)
-soul=""; brain=""
+soul=""; brain=""; pitfalls=""
 [ -f /root/SOUL.md ] && soul=$(head -c 300 /root/SOUL.md | tr '\n' ' ')
-[ -f /root/BRAIN.md ] && brain=$(head -c 700 /root/BRAIN.md | tr '\n' ' ')
+if [ -f /root/BRAIN.md ]; then
+  # structured memory: the newest lines per section, so one chatty
+  # section can't crowd the others out of the wake-up prompt
+  brain=$({ for s in fact pref lesson; do grep "^\[$s\]" /root/BRAIN.md 2>/dev/null | tail -2; done; grep '^\[project:' /root/BRAIN.md 2>/dev/null | tail -2; grep -v '^\[' /root/BRAIN.md 2>/dev/null | tail -2; } | tr '\n' ' ' | head -c 700)
+fi
+[ -f /root/FAILURES.md ] && pitfalls=$(tail -5 /root/FAILURES.md | tr '\n' ' ' | head -c 300)
 prompt="$SYS"
 [ -n "$soul" ] && prompt="$prompt YOU: $soul"
 [ -n "$brain" ] && prompt="$prompt MEMORY: $brain"
+[ -n "$pitfalls" ] && prompt="$prompt PITFALLS (do not repeat these): $pitfalls"
+pp0=$(plan_pending); [ -n "$pp0" ] && prompt="$prompt Pending plan steps: $pp0"
 prompt="$prompt TASK: $task"
 
 prev_cmd=""
@@ -174,12 +222,17 @@ failed=0
 recovered=0
 did_reflect=0
 pending_final=""
+pending_stage=0
+thinks=0
+maxthinks=6
 round=0
 maxround=15
-echo "[agent] start: $(short "$task") ($maxround rounds max)"
+[ "$DEPTH" -ge 1 ] && maxround=6
+if [ "$DEPTH" -ge 1 ]; then echo "[agent] start (sub-agent): $(short "$task") ($maxround rounds max)"; else echo "[agent] start: $(short "$task") ($maxround rounds max)"; fi
 while [ $round -lt $maxround ]; do
   round=$((round + 1))
   ans=$(qwen_ask "$prompt")
+  raw="$ans"
   # ONE call per reply: the brain likes to simulate the whole
   # conversation in a single line (a glued "; SAY:" tail, a second
   # TOOL call, an invented RESULT). Cut everything from the first
@@ -195,6 +248,28 @@ while [ $round -lt $maxround ]; do
   [ -z "$(printf '%s' "$ans" | tr -d ' \t')" ] && ans="[qwen: empty answer]"
   echo "[agent $round/$maxround] $(short "$ans")"
 
+  # THINK: private scratchpad. The brain may think out loud instead of
+  # acting - the thought is logged and folded into the next prompt as
+  # SCRATCH. Thinks don't consume tool rounds (they still cost model
+  # calls, so they're capped separately); the raw reply feeds the log
+  # because truncation would eat a thought that mentions TOOL or SAY.
+  case "$ans" in
+    "THINK:"*|"THINK "*)
+      if [ $thinks -ge $maxthinks ]; then
+        echo "[agent] think budget spent - must act now"
+        prompt="$SYS TASK: $task RESULT: (no more THINK: turns - you have thought enough. Send a TOOL verb now, or SAY: <final answer>)"
+        continue
+      fi
+      thinks=$((thinks + 1))
+      thought=$(printf '%s' "$raw" | sed 's/^THINK: *//;s/^THINK *//')
+      echo "$thought" >> /tmp/agent.think.$$
+      scratch=$(tail -3 /tmp/agent.think.$$ | tr '\n' ' ' | head -c 400)
+      echo "[agent] think $thinks/$maxthinks: $(short "$thought")"
+      round=$((round - 1))
+      prompt="$SYS TASK: $task SCRATCH (your own notes so far): $scratch RESULT: (noted - continue: next TOOL verb, or SAY: <final answer>)"
+      continue ;;
+  esac
+
   # task-echo guard: the plain base brain sometimes answers by
   # repeating the task back under its own "TASK:" label instead of
   # doing it (seen live 2026-10-31: reply was the task text itself,
@@ -207,25 +282,44 @@ while [ $round -lt $maxround ]; do
       continue ;;
   esac
 
-  # the reflection turn's reply is handled by the same verb machinery;
-  # whatever it says, afterwards we deliver the stashed final answer
+  # critique + revise: real work earns two turns before the answer
+  # goes out. Stage one asks what is unverified (a saveskill or
+  # remember counts as the keeping); stage two takes the corrected
+  # answer. A SAY: at stage one means "nothing to fix" - deliver it.
   if [ -n "$pending_final" ]; then
+    if [ "$pending_stage" -eq 1 ]; then
+      kept=0
+      case "$ans" in
+        *"TOOL saveskill "*)
+          spec=$(printf '%s' "$ans" | sed 's/.*TOOL saveskill //')
+          name=$(clean_name "$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')")
+          [ -z "$name" ] && name=unnamed
+          body=$(printf '%s' "$spec" | sed 's/^[^:]*:: *//')
+          { echo "# skill: $name"; echo "saved: $(date)"; echo "$body"; } > "/root/skills/$name.md"
+          echo "[agent] skill saved: $name"; kept=1 ;;
+        *"TOOL remember "*)
+          fact=$(printf '%s' "$ans" | sed 's/.*TOOL remember //')
+          grep -qxF "$fact" /root/BRAIN.md 2>/dev/null || echo "$fact" >> /root/BRAIN.md
+          echo "[agent] remembered: $(short "$fact")"; kept=1 ;;
+      esac
+      case "$ans" in
+        *"SAY: "*)
+          final2=$(printf '%s' "$ans" | sed 's/.*SAY: //')
+          echo "$(date) | $task => $final2" >> /root/history
+          echo "AGENT_ANSWER: $final2"
+          exit 0 ;;
+      esac
+      if [ $kept -eq 1 ]; then crit="(keeping noted)"; else crit="$ans"; echo "[agent] critique: $(short "$ans")"; fi
+      pending_stage=2
+      prompt="$SYS TASK: revise. The task '$task' draft answer was: $pending_final. Critique: $crit. Reply with the CORRECTED final answer as one SAY: line now."
+      continue
+    fi
     case "$ans" in
-      *"TOOL saveskill "*)
-        spec=$(printf '%s' "$ans" | sed 's/.*TOOL saveskill //')
-        name=$(clean_name "$(printf '%s' "$spec" | sed 's/ .*//;s/::.*//')")
-        [ -z "$name" ] && name=unnamed
-        body=$(printf '%s' "$spec" | sed 's/^[^:]*:: *//')
-        { echo "# skill: $name"; echo "saved: $(date)"; echo "$body"; } > "/root/skills/$name.md"
-        echo "[agent] skill saved: $name" ;;
-      *"TOOL remember "*)
-        fact=$(printf '%s' "$ans" | sed 's/.*TOOL remember //')
-        grep -qxF "$fact" /root/BRAIN.md 2>/dev/null || echo "$fact" >> /root/BRAIN.md
-        echo "[agent] remembered: $(short "$fact")" ;;
-      *) echo "[agent] reflection: nothing kept" ;;
+      *"SAY: "*) final2=$(printf '%s' "$ans" | sed 's/.*SAY: //') ;;
+      *) final2="$ans" ;;
     esac
-    echo "$(date) | $task => $pending_final" >> /root/history
-    echo "AGENT_ANSWER: $pending_final"
+    echo "$(date) | $task => $final2" >> /root/history
+    echo "AGENT_ANSWER: $final2"
     exit 0
   fi
 
@@ -273,16 +367,46 @@ while [ $round -lt $maxround ]; do
     *"TOOL remember "*)
       empties=0
       fact=$(printf '%s' "$ans" | sed 's/.*TOOL remember //')
+      # structured memory: facts carry a [section] tag; untagged facts
+      # save as [fact] so every line is greppable by section (old
+      # untagged lines keep working - recall still searches them)
+      case "$fact" in
+        "["*) : ;;
+        *) fact="[fact] $fact" ;;
+      esac
       grep -qxF "$fact" /root/BRAIN.md 2>/dev/null || echo "$fact" >> /root/BRAIN.md
       result_prompt "remembered: $fact (it is in your long-term memory now)"
       ;;
     *"TOOL recall "*)
       empties=0
       words=$(printf '%s' "$ans" | sed 's/.*TOOL recall //')
+      scope=""
+      case "$words" in
+        "in:"*)
+          scope=$(clean_name "$(printf '%s' "$words" | sed 's/^in://;s/ .*//')")
+          words=$(printf '%s' "$words" | sed 's/^in:[^ ]* *//') ;;
+      esac
       pat=$(printf '%s' "$words" | sed 's/ /|/g')
-      hits=$(grep -iE "$pat" /root/BRAIN.md /root/history /root/nb/* /root/skills/*.md 2>/dev/null | head -c 300 | tr '\n' ' ')
-      [ -z "$hits" ] && hits="(nothing found for: $words)"
+      if [ -n "$scope" ]; then
+        hits=$(grep -iE -e "^\[$scope\].*($pat)" /root/BRAIN.md 2>/dev/null | head -c 300 | tr '\n' ' ')
+        [ -z "$hits" ] && hits="(nothing in [$scope] for: $words)"
+      else
+        hits=$(grep -iE -e "$pat" /root/BRAIN.md /root/FAILURES.md /root/history /root/nb/* /root/skills/*.md 2>/dev/null | head -c 300 | tr '\n' ' ')
+        [ -z "$hits" ] && hits="(nothing found for: $words)"
+      fi
       result_prompt "$hits"
+      ;;
+    *"TOOL forget "*)
+      empties=0
+      words=$(printf '%s' "$ans" | sed 's/.*TOOL forget //')
+      pat=$(printf '%s' "$words" | sed 's/ /|/g')
+      before=0; [ -f /root/BRAIN.md ] && before=$(wc -l < /root/BRAIN.md)
+      # exit 0 (lines left) or 1 (none left) both mean "pattern was
+      # valid, rewrite"; anything else (bad pattern) keeps the file
+      grep -viE -e "$pat" /root/BRAIN.md 2>/dev/null > /root/BRAIN.md.tmp; st=$?
+      if [ $st -eq 0 ] || [ $st -eq 1 ]; then mv /root/BRAIN.md.tmp /root/BRAIN.md; else rm -f /root/BRAIN.md.tmp; fi
+      after=0; [ -f /root/BRAIN.md ] && after=$(wc -l < /root/BRAIN.md)
+      result_prompt "forgot $((before - after)) line(s) matching: $words ($after left)"
       ;;
     *"TOOL schedule "*)
       empties=0
@@ -339,6 +463,41 @@ while [ $round -lt $maxround ]; do
       else
         result_prompt "(there is no job $n - see TOOL jobs)"
       fi
+      ;;
+    *"TOOL plan"*)
+      empties=0
+      spec=$(printf '%s' "$ans" | sed 's/.*TOOL plan *//')
+      case "$spec" in
+        "done "*)
+          n=$(printf '%s' "$spec" | sed 's/^done //;s/[^0-9].*//')
+          if [ -n "$n" ] && grep -q -e '^- \[ \]' "$PLANF" 2>/dev/null; then
+            # check off the nth pending step (pure shell: no awk here)
+            tmp=$PLANF.tmp; : > "$tmp"; i=0; done_n=0
+            while IFS= read -r pl; do
+              case "$pl" in
+                "- [ ] "*)
+                  i=$((i + 1))
+                  if [ "$i" -eq "$n" ]; then echo "- [x]${pl#- \[ \]}" >> "$tmp"; done_n=1; else echo "$pl" >> "$tmp"; fi ;;
+                *) echo "$pl" >> "$tmp" ;;
+              esac
+            done < "$PLANF"
+            mv "$tmp" "$PLANF"
+            [ $done_n -eq 1 ] && result_prompt "plan step $n checked off" || result_prompt "(no pending plan step $n)"
+          else
+            result_prompt "(no plan yet - write one with TOOL plan :: step1; step2)"
+          fi ;;
+        "show"*|"status"*)
+          if [ -s "$PLANF" ]; then result_prompt "$(tr '\n' ';' < "$PLANF" | head -c 300)"; else result_prompt "(no plan yet)"; fi ;;
+        "clear"*)
+          rm -f "$PLANF"; result_prompt "plan cleared" ;;
+        ":: "*|":"*)
+          steps=$(printf '%s' "$spec" | sed 's/^:: *//;s/^: *//')
+          { echo "# plan for: $task"; echo "written: $(date)"; printf '%s' "$steps" | tr ';' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$' | sed 's/^/- [ ] /'; } > "$PLANF"
+          n=$(grep -c -e '^- \[ \]' "$PLANF")
+          result_prompt "plan written ($n steps) - pending steps ride along in every prompt until checked off with TOOL plan done <n>" ;;
+        *)
+          result_prompt "(usage: TOOL plan :: step1; step2 - or TOOL plan done <n> / show / clear)" ;;
+      esac
       ;;
     *"TOOL saveskill "*)
       empties=0
@@ -424,11 +583,41 @@ while [ $round -lt $maxround ]; do
       fi
       result_prompt "$out"
       ;;
+    *"TOOL delegate "*)
+      empties=0; toolcalls=$((toolcalls + 1))
+      # one level only: a sub-agent's own delegate is refused, or
+      # sessions would nest until the dashboard deadline kills them
+      if [ "$DEPTH" -ge 1 ]; then
+        result_prompt "(sub-agents cannot delegate - one level only. Do the step yourself with another TOOL)"
+      else
+        sub=$(printf '%s' "$ans" | sed 's/.*TOOL delegate //' | head -c 200)
+        echo "[agent] delegating: $(short "$sub")"
+        out=$(AGENT_DEPTH=1 AGENTD=1 "$0" "$sub" 2>&1)
+        rep=$(printf '%s' "$out" | grep 'AGENT_ANSWER:' | tail -1 | sed 's/.*AGENT_ANSWER: *//')
+        [ -z "$rep" ] && rep="(the sub-agent produced no answer)"
+        echo "[agent] sub-agent reported: $(short "$rep")"
+        result_prompt "sub-agent report: $rep"
+      fi
+      ;;
+    *"TOOL fetch "*)
+      empties=0; toolcalls=$((toolcalls + 1))
+      url=$(printf '%s' "$ans" | sed 's/.*TOOL fetch //' | sed 's/ .*//')
+      case "$url" in
+        "http://"*|"https://"*)
+          echo "[agent] fetching: $(short "$url")"
+          page=$(qwen_ask "FETCHURL $url" | head -c 600)
+          [ -z "$page" ] && page="(fetch returned nothing)"
+          result_prompt "fetched ($url): $page" ;;
+        *)
+          result_prompt "(fetch needs an http(s) URL - got: $url)" ;;
+      esac
+      ;;
     *"TOOL run "*)
       empties=0; toolcalls=$((toolcalls + 1))
       cmd=$(printf '%s' "$ans" | sed 's/.*TOOL run //')
       if deny "$cmd"; then
         echo "[agent] refused (denylist): $(short "$cmd")"
+        log_failure "denylist refused: $cmd"
         result_prompt "(refused by the harness: that command is on the safety denylist - it can destroy the system. do something else)"
         continue
       fi
@@ -445,6 +634,7 @@ while [ $round -lt $maxround ]; do
       runs=$(grep -cFx "$cmd" /tmp/agent.runs.$$ 2>/dev/null)
       if [ "${runs:-0}" -ge 2 ]; then
         echo "[agent] loop guard: same command already run $runs times"
+        log_failure "loop-guard refused a 3rd run of: $cmd"
         prompt="$SYS TASK: $task RESULT: you have already run that exact command $runs times in this session and it keeps giving the same result. Do a DIFFERENT next step, or reply SAY: <final answer> if you have what you need"
         continue
       fi
@@ -463,13 +653,14 @@ while [ $round -lt $maxround ]; do
       ;;
     *"SAY: "*)
       final=$(printf '%s' "$ans" | sed 's/.*SAY: //')
-      # the closed loop: real work earns one reflection turn before
-      # the answer goes out (>=4 tool calls, or a recovery) - what
-      # should future-you keep from this?
+      # the closed loop: real work earns critique + revise turns before
+      # the answer goes out (>=4 tool calls, or a recovery) - what is
+      # unverified gets fixed, and what is worth keeping gets kept
       if [ $did_reflect -eq 0 ] && { [ $toolcalls -ge 4 ] || [ $recovered -eq 1 ]; }; then
         did_reflect=1
         pending_final="$final"
-        prompt="$SYS TASK: reflection. The task '$task' is DONE (answer: $final). Before finishing: if a reusable procedure is worth keeping reply TOOL saveskill <name> :: <steps and pitfalls>; if a fact is worth keeping reply TOOL remember <fact>; otherwise reply SAY: done. ONE line."
+        pending_stage=1
+        prompt="$SYS TASK: critique. The task '$task' has a DRAFT answer: $final. What in it is unverified, guessed, or contradicted by the RESULTS above? If a reusable procedure is worth keeping reply TOOL saveskill <name> :: <steps and pitfalls>; if a fact is worth keeping reply TOOL remember <fact>; if the draft is solid reply SAY: <the draft, unchanged>. ONE line."
         continue
       fi
       echo "$(date) | $task => $final" >> /root/history
@@ -484,6 +675,7 @@ while [ $round -lt $maxround ]; do
       empties=$((empties + 1))
       echo "[agent] empty or device reply ($empties in a row)"
       if [ $empties -ge 3 ]; then
+        log_failure "model silent 3x in a row - task not completed"
         echo "AGENT_ANSWER: (the model gave no answer 3 times in a row - task not completed)"
         echo "[agent] stopped: model not answering"
         exit 1
@@ -501,6 +693,7 @@ while [ $round -lt $maxround ]; do
       ;;
   esac
 done
+log_failure "round cap ($maxround) - last result: $(printf '%s' "$prev_out" | head -c 120)"
 echo "$(date) | $task => (round limit) $prev_out" >> /root/history
 echo "AGENT_ANSWER: (round limit reached) last tool result: $prev_out"
 echo "[agent] stopped: tool round limit ($maxround) reached"

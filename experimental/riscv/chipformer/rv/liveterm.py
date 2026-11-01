@@ -25,7 +25,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from chipformer.rv.linux import LinuxMachine
-from chipformer.rv.qwenbackend import agent_bridge_backend, make_backend
+from chipformer.rv.qwenbackend import (agent_bridge_backend,
+                                       fetch_backend_wrapper, make_backend)
 
 HERE = Path(__file__).parent
 ASK_SH = (HERE / "env" / "linux" / "ask.sh").read_text()
@@ -237,6 +238,9 @@ def main() -> int:
         backend = make_backend(args.backend, args.lm_url)
         if args.bridge:
             backend = agent_bridge_backend(backend)
+        # the guest has no network: FETCHURL prompts are fetched by the
+        # host (TOOL fetch), everything else goes to the model/bridge
+        backend = fetch_backend_wrapper(backend)
     machine = None
     warm = False
     image = dtb = b""

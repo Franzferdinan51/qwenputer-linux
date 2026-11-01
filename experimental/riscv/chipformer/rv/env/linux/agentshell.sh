@@ -32,6 +32,16 @@ AGENT=/tmp/hermes-agent
 
 now_s() { date +%s; }
 
+# standing memory-upkeep job: without it BRAIN.md grows by append
+# forever and is never curated (verified missing 2026-11-01). The
+# supervisor re-seeds it on every tick while absent - daily,
+# self-healing, and the kill switch still stops it firing.
+seed_upkeep() {
+  grep -q 'MEMORY UPKEEP' "$JOBS" 2>/dev/null && return 0
+  due=$(( $(now_s) + 86400 ))
+  echo "$due|1440|0|never run|MEMORY UPKEEP: curate your long-term memory - TOOL recall each section to review it, TOOL forget the stale and duplicated lines, TOOL remember merged replacements. Keep /root/BRAIN.md small and true." >> "$JOBS"
+}
+
 # run_session <task-for-the-agent> -> echoes the session output
 run_session() {
   AGENTD=1 "$AGENT" "$1" 2>&1
@@ -157,6 +167,7 @@ trap 'rm -f /tmp/agentshell.pid' EXIT
 prompt_now=1
 while true; do
   heartbeat
+  seed_upkeep
   fire_due_jobs
   # the prompt prints once per command, never once per tick: the read
   # below times out every 60 GUEST seconds (~12 wall seconds - the

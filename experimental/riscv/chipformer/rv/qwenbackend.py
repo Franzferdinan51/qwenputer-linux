@@ -181,6 +181,53 @@ _BRIDGE_HINT = (
     "hermes-agent>. You will then receive its report and can answer.]")
 
 
+FETCH_MARK = "FETCHURL "
+FETCH_MAX_BYTES = 4096
+
+
+def fetch_page(url: str) -> str:
+    """Fetch a page for the guest agent (its TOOL fetch verb).
+
+    The guest has no network, so the host fetches on its behalf:
+    http(s) only, no credentials in the URL, 15 s timeout, 4 KB cap,
+    flattened to one console-safe line. Failures come back as a
+    ``[fetch: ...]`` notice, never an exception, so the session
+    survives a dead link.
+    """
+    url = (url or "").strip().split()[0] if (url or "").strip() else ""
+    try:
+        if not url or not url.lower().startswith(("http://", "https://")):
+            return f"[fetch: refused (http(s) only): {url[:80]}]"
+        if "@" in url.split("/", 3)[2]:
+            return "[fetch: refused (credentials in URL)]"
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "qwenputer-fetch/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read(FETCH_MAX_BYTES + 1)
+        if len(raw) > FETCH_MAX_BYTES:
+            raw = raw[:FETCH_MAX_BYTES]
+        text = " ".join(raw.decode("utf-8", "replace").split())
+        return text[:2000] or "[fetch: page was empty]"
+    except Exception as e:
+        return f"[fetch: failed: {str(e)[:160]}]"
+
+
+def fetch_backend_wrapper(base):
+    """Wrap a backend so ``FETCHURL <url>`` prompts are fetched by the
+    host instead of asked of the model. The guest harness sends exactly
+    that marker (TOOL fetch); everything else passes straight through.
+    No guest or device change: the marker rides the existing QWEN:
+    console protocol and needs no fastlinux.c change.
+    """
+    def ask(prompt: str) -> str:
+        if isinstance(prompt, str) and prompt.startswith(FETCH_MARK):
+            return fetch_page(prompt[len(FETCH_MARK):])
+        return base(prompt)
+
+    ask.model = getattr(base, "model", "fetch")
+    return ask
+
+
 def agent_bridge_backend(base):
     """Wrap a backend so the model in the seat can *use* the guest's
     hermes-agent: an ordinary question is offered the choice, and if the
