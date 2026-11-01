@@ -12,7 +12,10 @@ The device is deliberately backend-blind — today these are:
                    pinned (a pristine/base build wins over fine-tunes
                    when several match). This is the harness's default:
                    hermes-agent's brain is the built-in weights, not
-                   whatever happens to be loaded.
+                   whatever happens to be loaded. ``QWEN_MODEL`` pins an
+                   exact model id instead, and ``QWEN_FAMILY`` overrides
+                   the family substring — the two knobs that keep a
+                   fused/GGUF build seated under its new name.
 
 The endgame backend is the Qwenputer checkpoint's own language layers
 (the same model whose chip layers run the guest CPU); it drops in behind
@@ -100,6 +103,37 @@ def lmstudio_backend(base_url: str | None = None, proxy: str | None = None,
 BUILTIN_FAMILY = "qwen3.5-4b"
 
 
+def pick_builtin_model(ids, pin=None, family=BUILTIN_FAMILY):
+    """Pick the seated model id from LM Studio's model list (pure: no I/O).
+
+    An exact pin wins when it names a listed id; otherwise the family
+    substring decides (a pristine/base build wins over tagged
+    fine-tunes when several match). Raises RuntimeError instead of
+    serving a different model — the harness must think with the
+    built-in weights or say so. After a fuse/GGUF conversion the new
+    build keeps working here as long as its LM Studio id still carries
+    the family substring (e.g. a qwen3.5-4b-qwenputer GGUF does); under
+    a wholly new name, seat it with QWEN_MODEL/QWEN_FAMILY.
+    """
+    ids = [i for i in ids if i]
+    if pin and pin != "auto":
+        if pin not in ids:
+            raise RuntimeError(
+                f'pinned model {pin!r} is not loaded '
+                f'(have: {", ".join(ids) or "no models"})')
+        return pin
+    family = (family or BUILTIN_FAMILY).lower()
+    fam = [i for i in ids if family in i.lower()]
+    if not fam:
+        raise RuntimeError(
+            f"the built-in weights ({family}) are not available in "
+            f"LM Studio (have: {', '.join(ids) or 'no models'}); load a "
+            f"matching build first, or point QWEN_MODEL/QWEN_FAMILY at "
+            f"the fused build's id")
+    fam.sort(key=lambda i: ("3d-coder" in i.lower(), i))
+    return fam[0]
+
+
 def builtin_backend(base_url: str | None = None, proxy: str | None = None):
     """The harness's preconfigured brain: Qwen 3.5 4B in LM Studio.
 
@@ -108,7 +142,9 @@ def builtin_backend(base_url: str | None = None, proxy: str | None = None):
     tagged fine-tunes when both are present; otherwise the first family
     match serves. Raises when no Qwen 3.5 4B is available at all — the
     harness must think with the built-in weights or say so, never
-    silently fall back to a different model.
+    silently fall back to a different model. QWEN_MODEL pins an exact
+    id and QWEN_FAMILY overrides the family substring, so a fused or
+    GGUF-converted build keeps working under its new name.
     """
     base = (base_url or os.environ.get("QWEN_LM_URL")
             or "http://127.0.0.1:1234").rstrip("/")
@@ -123,14 +159,13 @@ def builtin_backend(base_url: str | None = None, proxy: str | None = None):
     except Exception as e:
         raise RuntimeError(f"LM Studio request to {base}/v1/models failed: {e}")
     ids = [m.get("id") for m in data if m.get("id")]
-    fam = [i for i in ids if BUILTIN_FAMILY in i.lower()]
-    if not fam:
-        raise RuntimeError(
-            f"the built-in weights ({BUILTIN_FAMILY}) are not available in "
-            f"LM Studio at {base} (have: {', '.join(ids) or 'no models'}); "
-            f"load a Qwen 3.5 4B build first")
-    fam.sort(key=lambda i: ("3d-coder" in i.lower(), i))
-    return lmstudio_backend(base_url, proxy, model=fam[0])
+    try:
+        choice = pick_builtin_model(
+            ids, pin=os.environ.get("QWEN_MODEL"),
+            family=os.environ.get("QWEN_FAMILY") or BUILTIN_FAMILY)
+    except RuntimeError as e:
+        raise RuntimeError(f"{e} at {base}")
+    return lmstudio_backend(base_url, proxy, model=choice)
 
 
 # A prompt from inside the guest harness always carries this phrase

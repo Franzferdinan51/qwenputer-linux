@@ -21,11 +21,13 @@ Run:  python3 dashboard.py [--port 8952]
 """
 
 import argparse
+import collections
 import json
 import os
 import re
 import socket
 import subprocess
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -113,10 +115,11 @@ def save_settings(new):
 
 def resolve_model(s):
     """Builtin rule (mirrors qwenbackend.builtin_backend): the qwen3.5-4b
-    family member already listed by the backend; a pristine base id wins
-    over fine-tune tags; never loads anything, and never silently serves
-    a different model when the wanted one is missing (the page already
-    renders a None model as unreachable)."""
+    family member already listed by the backend (QWEN_FAMILY overrides
+    the family substring for fused/GGUF builds under a new name); a
+    pristine base id wins over fine-tune tags; never loads anything,
+    and never silently serves a different model when the wanted one is
+    missing (the page already renders a None model as unreachable)."""
     try:
         url = s["backend_url"].rstrip("/") + "/v1/models"
         with urllib.request.urlopen(url, timeout=5) as r:
@@ -132,12 +135,13 @@ def resolve_model(s):
             return want, None
         return None, "model %r is not loaded (have: %s)" % (
             want, ", ".join(ids)[:120])
-    fam = [i for i in ids if "qwen3.5-4b" in i.lower()]
+    family = (os.environ.get("QWEN_FAMILY") or "qwen3.5-4b").lower()
+    fam = [i for i in ids if family in i.lower()]
     if fam:
         fam.sort(key=lambda i: ("3d-coder" in i.lower(), i))
         return fam[0], None
-    return None, "no qwen3.5-4b model loaded (have: %s)" % (
-        ", ".join(ids)[:120])
+    return None, "no %s model loaded (have: %s)" % (
+        family, ", ".join(ids)[:120])
 
 
 def tail(path, n=6000):
@@ -231,15 +235,78 @@ TASK_HINT = (
 )
 
 
+# --- guest delegation queue (Duckets, 2026-11-01: "the computer
+# said it was busy") ---
+# The computer is one console and it is slow; several chat turns (or
+# a chat turn plus the user typing in the Terminal tab) contend for
+# it. Delegations therefore line up in a strict FIFO instead of
+# being refused: a waiter sends "queued #n" status until its turn,
+# then waits for the agentshell prompt, hands over, and reads the
+# report back. _GUEST_HANDS/_GUEST_DONES are monotonic counters for
+# the activity view (handover pulses brain -> computer, report
+# pulses computer -> brain).
+_GUEST_COND = threading.Condition()
+_GUEST_QUEUE = collections.deque()  # FIFO of opaque tickets
+_GUEST_BUSY = [False]               # a delegation owns the console
+_GUEST_HANDS = [0]                  # jobs handed over, all time
+_GUEST_DONES = [0]                  # reports back, all time
+_GUEST_TASK = [""]                  # task text currently in flight
+
+
+def _guest_acquire(send, budget=600):
+    """Take a FIFO ticket and block until this delegation owns the
+    computer. True when the slot is ours (caller must _guest_release
+    it); False when the budget ran out (ticket dropped)."""
+    ticket = object()
+    start = time.time()
+    with _GUEST_COND:
+        _GUEST_QUEUE.append(ticket)
+        try:
+            while True:
+                try:
+                    pos = _GUEST_QUEUE.index(ticket)
+                except ValueError:
+                    return False
+                if pos == 0 and not _GUEST_BUSY[0]:
+                    _GUEST_QUEUE.popleft()
+                    _GUEST_BUSY[0] = True
+                    return True
+                remaining = budget - (time.time() - start)
+                if remaining <= 0:
+                    _GUEST_QUEUE.remove(ticket)
+                    _GUEST_COND.notify_all()
+                    return False
+                if pos > 0:
+                    send({"status":
+                          "the computer is busy - queued #%d" % (pos + 1)})
+                else:
+                    send({"status": "next in line - the computer is "
+                                    "finishing its current job"})
+                _GUEST_COND.wait(timeout=min(15, remaining))
+        except Exception:
+            try:
+                _GUEST_QUEUE.remove(ticket)
+            except ValueError:
+                pass
+            _GUEST_COND.notify_all()
+            raise
+
+
+def _guest_release():
+    with _GUEST_COND:
+        _GUEST_BUSY[0] = False
+        _GUEST_COND.notify_all()
+
+
 def _guest_task(task, send):
     """Run one hermes-agent session in the live terminal guest and
     return its AGENT_ANSWER text; None when the terminal is offline.
 
     The task is typed at the guest's own console (the agentshell
     runs it in the foreground, exactly as if the user typed it -
-    the session is visible in the Terminal tab). One known blur:
-    if the user is mid-session at that same console, answers queue
-    behind theirs and the last AGENT_ANSWER in the window wins."""
+    the session is visible in the Terminal tab). When the computer
+    is busy the job waits its turn in the FIFO queue instead of
+    being refused; only an offline terminal fails fast."""
     base = "http://127.0.0.1:8951"
     try:
         with urllib.request.urlopen(base + "/api/out?since=0",
@@ -248,51 +315,89 @@ def _guest_task(task, send):
             mark = snap["until"]
     except Exception:
         return None
-    # Readiness gate (2026-10-31, Duckets' "chat sits working while
-    # the brain runs" report): delegate ONLY when the terminal is
-    # actually sitting at the agentshell prompt. Typing a job into
-    # a console that is still installing, mid-session, or at a
-    # plain shell queues it behind whatever owns the console and
-    # the chat then waits the full deadline while the brain burns
-    # further rounds - the exact stuck-working disconnect. When
-    # the computer is not at its prompt, say so at once.
-    tail = snap["data"][-400:]
-    if "ASK_READY" not in snap["data"] or \
-            not tail.rstrip().endswith("agent>"):
-        return ("(the computer is busy right now - it is starting "
-                "up or in the middle of something else, so the job "
-                "was not handed over)")
-    line = 'hermes-agent "' + task.replace('"', "'") + '"\n'
+    if not _guest_acquire(send):
+        return ("(the computer stayed busy for 10 minutes - the job "
+                "was NOT done. Tell the user the computer is still "
+                "busy and to try again shortly.)")
     try:
-        req = urllib.request.Request(
-            base + "/api/in", data=json.dumps({"data": line}).encode(),
-            headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10).read()
-    except Exception:
-        return None
-    # 10 wall minutes: a 15-round session at ~20-40 s per model
-    # round-trip needs it; the old 120 s cut real sessions off
-    # mid-answer (seen live: the chat gave up while the guest was
-    # still working through its rounds).
-    deadline = time.time() + 600
-    waited = 0
-    while time.time() < deadline:
-        time.sleep(3)
-        waited += 3
-        if waited % 15 == 0:
-            send({"status": "the computer is working… %ds" % waited})
+        # Readiness wait (was an instant gate 2026-10-31, Duckets'
+        # "chat sits working while the brain runs" report): hand
+        # over ONLY when the terminal is actually sitting at the
+        # agentshell prompt. Typing a job into a console that is
+        # still installing, mid-session, or at a plain shell queues
+        # it behind whatever owns the console and the chat then
+        # waits while the brain burns further rounds. Now the wait
+        # is explicit and statused instead of a refusal.
+        send({"status": "our turn - waiting for the computer's prompt…"})
+        waited_q = 0
+        errors = 0
+        while True:
+            try:
+                with urllib.request.urlopen(base + "/api/out?since=0",
+                                            timeout=10) as r:
+                    snap = json.loads(r.read())
+                errors = 0
+            except Exception:
+                errors += 1
+                if errors >= 3:
+                    return None
+                time.sleep(5)
+                continue
+            tail = snap["data"][-400:]
+            if "ASK_READY" in snap["data"] and \
+                    tail.rstrip().endswith("agent>"):
+                mark = snap["until"]
+                break
+            time.sleep(5)
+            waited_q += 5
+            if waited_q % 15 == 0:
+                send({"status": "waiting for the computer's prompt… %ds"
+                               % waited_q})
+            if waited_q >= 600:
+                return ("(the computer stayed busy for 10 minutes - the job "
+                        "was NOT done. Tell the user the computer is still "
+                        "busy and to try again shortly.)")
+        line = 'hermes-agent "' + task.replace('"', "'") + '"\n'
         try:
-            with urllib.request.urlopen(
-                    base + "/api/out?since=%d" % mark, timeout=10) as r:
-                data = json.loads(r.read())["data"]
+            req = urllib.request.Request(
+                base + "/api/in", data=json.dumps({"data": line}).encode(),
+                headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10).read()
         except Exception:
-            continue
-        idx = data.rfind("\nAGENT_ANSWER:")
-        if idx >= 0:
-            ans = data[idx + len("\nAGENT_ANSWER:"):].split("\n")[0].strip()
-            if ans:
-                return ans
-    return "(the computer did not answer within 10 minutes)"
+            return None
+        _GUEST_HANDS[0] += 1
+        _GUEST_TASK[0] = task[:90]
+        # 10 wall minutes: a 15-round session at ~20-40 s per model
+        # round-trip needs it; the old 120 s cut real sessions off
+        # mid-answer (seen live: the chat gave up while the guest was
+        # still working through its rounds).
+        deadline = time.time() + 600
+        waited = 0
+        try:
+            while time.time() < deadline:
+                time.sleep(3)
+                waited += 3
+                if waited % 15 == 0:
+                    send({"status": "the computer is working… %ds" % waited})
+                try:
+                    with urllib.request.urlopen(
+                            base + "/api/out?since=%d" % mark,
+                            timeout=10) as r:
+                        data = json.loads(r.read())["data"]
+                except Exception:
+                    continue
+                idx = data.rfind("\nAGENT_ANSWER:")
+                if idx >= 0:
+                    ans = data[idx + len("\nAGENT_ANSWER:"):].split("\n")[0]
+                    ans = ans.strip()
+                    if ans:
+                        return ans
+            return "(the computer did not answer within 10 minutes)"
+        finally:
+            _GUEST_DONES[0] += 1
+    finally:
+        _GUEST_TASK[0] = ""
+        _guest_release()
 
 
 def get_activity():
@@ -310,12 +415,19 @@ def get_activity():
     grown["fail"] = "CIRCUIT AGENT: FAIL" in tail(grown_log_path)
     stock = _circuit_tokens(os.path.expanduser(
         "~/qwenputer-test/circuit-stock-builtin.log"))
+    with _GUEST_COND:
+        qlen = len(_GUEST_QUEUE)
     return {
         "chat_series": series,
         "chat_open": _CHAT_OPEN[0],
         "grown": grown,
         "stock": stock,
         "terminal_up": tcp_up(8951),
+        "guest_hands": _GUEST_HANDS[0],
+        "guest_dones": _GUEST_DONES[0],
+        "guest_active": _GUEST_BUSY[0],
+        "guest_queue": qlen,
+        "guest_task": _GUEST_TASK[0],
     }
 
 
@@ -481,23 +593,25 @@ code{background:var(--code);padding:1px 6px;border-radius:5px}
 <div class="card" style="margin-bottom:12px"><h3>ACTIVITY &mdash; LIVE</h3>
 <div id="nowrows" style="font-size:15px;line-height:1.65;margin:2px 0 10px">
 <div><b>chat:</b> <span id="now-chat">&hellip;</span></div>
-<div><b>computer in the weights:</b> <span id="now-circuit">&hellip;</span></div>
-<div><b>guest linux:</b> <span id="now-guest">&hellip;</span></div>
+<div><b>computer:</b> <span id="now-computer">&hellip;</span></div>
+<div><b>computer, all time:</b> <span id="now-guest">&hellip;</span></div>
+<div><b>circuit experiment:</b> <span id="now-circuit">&hellip;</span></div>
 </div>
 <canvas id="viz" width="900" height="250"></canvas>
 <p class="dim" id="vizlegend">warming up&hellip;</p>
-<p class="dim">left: the brain thinking (amber). right: the computer
-in the weights (blue). pulses are real work &mdash; chat tokens
-flowing, and prompts crossing the mailbox between brain and
-computer. nothing here is decoration: when nothing moves, nothing
-happened.</p></div>
+<p class="dim">left: the brain thinking (amber). right: the live
+computer &mdash; guest linux, running on these same open weights
+through the seat (blue). pulses are real work: amber flows
+brain&nbsp;&rarr;&nbsp;computer when a job is handed over, blue
+flows back when the computer reports. nothing here is decoration:
+when nothing moves, nothing happened.</p></div>
 <div class="cards">
 <div class="card"><h3>THE BRAIN</h3>
 <p id="ov-model">&hellip;</p>
 <p class="dim">the built-in Qwen 3.5 4B weights, served as the seat.
-the chat tab talks to this. the computer in the weights asks it
+the chat tab talks to this. the guest computer asks it
 questions the same way.</p></div>
-<div class="card"><h3>THE COMPUTER IN THE WEIGHTS</h3>
+<div class="card"><h3>COMPILED CIRCUIT (EXPERIMENT)</h3>
 <p>stock circuit agent: <span id="ov-stock" class="badge">?</span></p>
 <p>grown 2 MB circuit: <span id="ov-grown" class="badge">?</span></p>
 <pre id="ov-grownlog"></pre></div>
@@ -736,10 +850,11 @@ let rot=0;
 function proj(p,cx,cy,s){const c=Math.cos(rot),sn=Math.sin(rot);
  const x=p[0]*c-p[2]*sn,z=p[0]*sn+p[2]*c,y=p[1];
  const d=340/(340+z*40);return[cx+x*s*d,cy+y*s*d,d];}
-function vizPulse(n,big){for(let i=0;i<n;i++){if(viz.pulses.length>240)return;
+function vizPulse(n,big,back){for(let i=0;i<n;i++){if(viz.pulses.length>240)return;
+ const a=brainPts[Math.random()*brainPts.length|0],
+       b=chipPts[Math.random()*chipPts.length|0];
  viz.pulses.push({t:0,sp:.0035+Math.random()*.004,
-  a:brainPts[Math.random()*brainPts.length|0],
-  b:chipPts[Math.random()*chipPts.length|0],big:!!big});}}
+  a:back?b:a,b:back?a:b,big:!!big,back:!!back});}}
 window.vizPulse=vizPulse;
 function drawViz(){rot+=.0035;vctx.clearRect(0,0,900,250);
  const draw=(pts,cx,cy,s,col)=>{const out=[];
@@ -751,13 +866,13 @@ function drawViz(){rot+=.0035;vctx.clearRect(0,0,900,250);
  draw(chipPts,665,118,15,'#57c7ff');
  vctx.fillStyle='#9aa7b5';vctx.font='12px sans-serif';
  vctx.fillText('BRAIN \u2014 qwen 3.5 4b, the seat',140,240);
- vctx.fillText('COMPUTER \u2014 the compiled chip',540,240);
+ vctx.fillText('COMPUTER \u2014 guest linux, same weights',520,240);
  viz.pulses=viz.pulses.filter(p=>p.t<=1);
  for(const p of viz.pulses){p.t+=p.sp;
   const a=proj(p.a,225,118,64),b=proj(p.b,665,118,15);
   const x=a[0]+(b[0]-a[0])*p.t,
         y=a[1]+(b[1]-a[1])*p.t-Math.sin(p.t*3.14)*36;
-  vctx.globalAlpha=.9;vctx.fillStyle=p.big?'#ffffff':'#ffd479';
+  vctx.globalAlpha=.9;vctx.fillStyle=p.big?'#ffffff':(p.back?'#57c7ff':'#ffd479');
   vctx.beginPath();vctx.arc(x,y,p.big?3:2,0,7);vctx.fill();
   vctx.globalAlpha=1;}
  requestAnimationFrame(drawViz);}
@@ -766,11 +881,22 @@ async function activity(){
  try{const r=await fetch('/api/activity');const j=await r.json();
   const s=j.chat_series,rate=s.slice(20).reduce((a,b)=>a+b,0)/20;
   if(j.chat_open>0&&rate>0)vizPulse(Math.min(3,Math.ceil(rate/6)));
-  if(j.grown.running&&j.grown.tokens>0)vizPulse(1);
+  if(viz.lastHands===undefined){viz.lastHands=j.guest_hands||0;viz.lastDones=j.guest_dones||0;}
+  if((j.guest_hands||0)>viz.lastHands){
+   vizPulse(Math.min(6,((j.guest_hands||0)-viz.lastHands)*2));viz.lastHands=j.guest_hands||0;}
+  if((j.guest_dones||0)>viz.lastDones){
+   vizPulse(Math.min(6,((j.guest_dones||0)-viz.lastDones)*2),false,true);viz.lastDones=j.guest_dones||0;}
+  if(j.grown.running&&(j.grown.tokens||0)>0)vizPulse(1);
   if(viz.lastPrompts>=0&&j.grown.prompts>viz.lastPrompts)vizPulse(6,true);
   viz.lastPrompts=j.grown.prompts;
   $('now-chat').textContent=j.chat_open?
    'answering right now':'idle - nobody is chatting';
+  $('now-computer').textContent=!j.terminal_up?
+   'down - start liveterm (:8951)':
+   (j.guest_active?
+    ('working'+(j.guest_task?': '+j.guest_task:'')+(j.guest_queue?' \u00b7 '+j.guest_queue+' queued':'')):
+    (j.guest_queue?j.guest_queue+' queued, waiting for the prompt':'idle at its prompt'));
+  $('now-guest').textContent=(j.guest_hands||0)+' jobs run \u00b7 '+(j.guest_dones||0)+' reports back';
   $('now-circuit').textContent=j.grown.pass?
    'the agent run on the grown circuit passed':
    (j.grown.fail?
@@ -779,18 +905,17 @@ async function activity(){
     ('running the agent - '+j.grown.prompts+
      ' questions answered so far, at token '+
      j.grown.tokens.toLocaleString()):'not running'));
-  $('now-guest').textContent=j.terminal_up?
-   'up - the agent shell is sitting on its console':'down';
   $('t-chat').innerHTML=j.chat_open?'<span class="dot ok"></span>live':'idle';
   $('t-chatbar').style.width=Math.min(100,rate*4)+'%';
   $('t-tok').textContent=(j.grown.tokens||0).toLocaleString();
   const tp=j.grown.prompts||0;
   $('t-tokbar').style.width=Math.min(100,tp*10)+'%';
   $('t-tok').title=tp+' prompts answered';
-  $('vizlegend').textContent='the dots are real events: a dot '
-   +'crosses when the chat streams words, and a white flash '
-   +'crosses when the computer in the weights answers a '
-   +'question. slow dots, on purpose - the circuit is slow.';
+  $('vizlegend').textContent='the dots are real events: amber '
+   +'crosses brain \u2192 computer when a job is handed over, blue '
+   +'crosses back when the computer reports, and a white flash '
+   +'crosses when the circuit experiment answers. slow dots, on '
+   +'purpose - the computer is slow.';
  }catch(e){}
  setTimeout(activity,1000);}
 activity();

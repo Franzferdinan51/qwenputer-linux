@@ -188,7 +188,13 @@ model, auto-detected) remains for experiments. Two practical notes:
 today's LM Studio build here is a fine-tune of Qwen 3.5 4B (the
 pristine base takes precedence automatically when one is added), and
 Qwen 3.5's thinking wants headroom — `QWEN_MAX_TOKENS=1024` for agent
-work; at 512 its first delegation reply once came back empty. With
+work; at 512 its first delegation reply once came back empty. Fusing
+the weights and converting to GGUF changes nothing on the wire — the
+seat, the guest, and the dashboard all talk weight-format-blind HTTP
+and console text — as long as the fused build's LM Studio id still
+carries the `qwen3.5-4b` family substring (a `qwen3.5-4b-qwenputer`
+GGUF does); under a wholly new name, seat it with `QWEN_MODEL=<exact
+id>` or `QWEN_FAMILY=<substring>` in the service environment. With
 the built-in weights seated, the live proofs all pass — the agent
 round trip (`boot-logs/agent-builtin.out`) and, at 1024 tokens, the
 delegation bridge end to end: the model chose `AGENT:`, hermes-agent
