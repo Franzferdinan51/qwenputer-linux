@@ -270,7 +270,11 @@ def _guest_task(task, send):
         urllib.request.urlopen(req, timeout=10).read()
     except Exception:
         return None
-    deadline = time.time() + 120
+    # 10 wall minutes: a 15-round session at ~20-40 s per model
+    # round-trip needs it; the old 120 s cut real sessions off
+    # mid-answer (seen live: the chat gave up while the guest was
+    # still working through its rounds).
+    deadline = time.time() + 600
     waited = 0
     while time.time() < deadline:
         time.sleep(3)
@@ -288,7 +292,7 @@ def _guest_task(task, send):
             ans = data[idx + len("\nAGENT_ANSWER:"):].split("\n")[0].strip()
             if ans:
                 return ans
-    return "(the computer did not answer within 2 minutes)"
+    return "(the computer did not answer within 10 minutes)"
 
 
 def get_activity():

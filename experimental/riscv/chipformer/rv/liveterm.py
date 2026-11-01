@@ -74,19 +74,33 @@ PAGE = """<!doctype html>
 <script>
 const term = document.getElementById('term');
 const box = document.getElementById('box');
-let since = 0, text = '';
+let since = 0, text = '', raw = '';
+// Long QWEN: prompt lines (the full system prompt, re-sent every agent
+// round) fold to one short line once complete - the terminal shows the
+// head plus a char count instead of ~2KB of repeated prompt per round.
+function fold(line) {
+  if (line.startsWith('QWEN:') && line.length > 160)
+    return 'QWEN: ' + line.slice(5, 125) + ' ... [' + line.length + ' chars]';
+  return line;
+}
 async function poll() {
   try {
     const r = await fetch('/api/out?since=' + since);
     const j = await r.json();
     if (j.data) {
       for (const ch of j.data) {
-        if (ch === '\\b' || ch === '\\x7f') text = text.slice(0, -1);
-        else text += ch;
+        if (ch === '\\b' || ch === '\\x7f') raw = raw.slice(0, -1);
+        else raw += ch;
       }
       since = j.until;
-      term.textContent = text;
-      term.scrollTop = term.scrollHeight;
+      const parts = raw.split('\\n');
+      raw = parts.pop();
+      for (const ln of parts) text += fold(ln) + '\\n';
+      // sticky scroll: follow the bottom only if the user was already
+      // there - reading scrollback no longer gets yanked away.
+      const stick = term.scrollHeight - term.scrollTop - term.clientHeight < 60;
+      term.textContent = text + raw;
+      if (stick) term.scrollTop = term.scrollHeight;
     }
   } catch (e) {}
   setTimeout(poll, 250);

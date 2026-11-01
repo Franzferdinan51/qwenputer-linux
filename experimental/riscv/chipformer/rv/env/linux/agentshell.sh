@@ -10,7 +10,10 @@
 #   - type a shell command -> it runs, foreground
 #   - type: hermes-agent "a task" -> an agent session, foreground
 #   - type: exit -> back to the plain shell (/tmp/agentshell to return)
-#   - idle 60s -> the tick: heartbeat checks + due jobs run, foreground
+#   - idle 60 guest seconds (~12 wall seconds: the emulated clock
+#     runs ~5x fast) -> the tick: heartbeat checks + due jobs run,
+#     foreground, and the read below simply waits again - no new
+#     prompt, so an idle console stays to one agent> line.
 # Everything is serialized through this one process, so exactly one
 # reader ever waits on the console and the QWEN: protocol just works.
 #
@@ -151,14 +154,21 @@ echo "  type: exit (plain shell)  sh (interactive shell, exit returns)"
 echo $$ > /tmp/agentshell.pid
 trap 'rm -f /tmp/agentshell.pid' EXIT
 
+prompt_now=1
 while true; do
   heartbeat
   fire_due_jobs
-  printf 'agent> '
+  # the prompt prints once per command, never once per tick: the read
+  # below times out every 60 GUEST seconds (~12 wall seconds - the
+  # emulated clock runs ~5x fast), and reprinting each time filled
+  # the console with hundreds of agent> prompts on one line.
+  if [ $prompt_now -eq 1 ]; then printf 'agent> '; prompt_now=0; fi
   line=""
   # IFS= and -r: the line is a command, read it verbatim (the bare
   # read ate backslashes and edge whitespace out of typed commands)
+  t0=$(date +%s)
   if IFS= read -r -t 60 line; then
+    prompt_now=1
     # dispatch on the line with leading blanks stripped, so a typed
     # "  exit" still leaves; the line itself runs verbatim
     tline=$(printf '%s' "$line" | sed 's/^[[:space:]]*//')
@@ -174,6 +184,14 @@ while true; do
       calc|calc\ *) eval "/tmp/calc ${tline#calc}" ;;
       *) eval "$line" ;;
     esac
+  else
+    # a read that fails with no input in under a guest second is a
+    # wedged console, not a timeout - wait before retrying instead
+    # of spinning the tick loop.
+    t1=$(date +%s)
+    if [ $((t1 - t0)) -lt 1 ]; then sleep 2; fi
   fi
-  # read timed out (60s) or a command finished: loop back to the tick
+  # read timed out (60 guest seconds) or a command finished: loop
+  # back to the tick. Timeouts re-read silently - the prompt above
+  # is already showing.
 done

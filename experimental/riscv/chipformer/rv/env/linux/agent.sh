@@ -32,6 +32,11 @@
 #
 # Usage: hermes-agent "your task in quotes"
 # Example: hermes-agent "write hello into /tmp/hi.txt"
+#
+# Console output is compact on purpose: one start line, one line per
+# model reply tagged [agent round/max], one line per TOOL run result,
+# then AGENT_ANSWER. Long replies and outputs are capped at 200 chars
+# for display only - the model still gets full results in its prompts.
 
 # NOTE: SYS is built in two assignments because the guest tty drops
 # input past ~1021 chars on a single line (measured 2026-10-31: a
@@ -83,6 +88,7 @@ deny() {
 }
 
 result_prompt() {
+  prev_out="$1"
   prompt="$SYS TASK: $task RESULT: $1 Now reply with EXACTLY ONE line: a TOOL verb or SAY: <final answer>"
 }
 
@@ -91,6 +97,19 @@ clean_name() {
   # segment so a ../../.. name can never escape /root/skills or
   # /root/apps into the rest of the filesystem
   printf '%s' "$1" | tr -cd 'A-Za-z0-9_-' | head -c 48
+}
+
+short() {
+  # short <text> -> the text capped for CONSOLE display (200 chars plus
+  # a marker). The model still gets full results inside its prompts -
+  # this only keeps the terminal readable when replies and tool output
+  # run long, especially mid-loop.
+  s=$1
+  if [ "${#s}" -gt 200 ]; then
+    printf '%s...' "$(printf '%s' "$s" | head -c 200)"
+  else
+    printf '%s' "$s"
+  fi
 }
 
 task="$*"
@@ -147,6 +166,8 @@ prompt="$prompt TASK: $task"
 prev_cmd=""
 prev_out=""
 prev_ans=""
+prev_ans2=""
+circles=0
 empties=0
 toolcalls=0
 failed=0
@@ -154,7 +175,9 @@ recovered=0
 did_reflect=0
 pending_final=""
 round=0
-while [ $round -lt 9 ]; do
+maxround=15
+echo "[agent] start: $(short "$task") ($maxround rounds max)"
+while [ $round -lt $maxround ]; do
   round=$((round + 1))
   ans=$(qwen_ask "$prompt")
   # ONE call per reply: the brain likes to simulate the whole
@@ -170,7 +193,7 @@ while [ $round -lt 9 ]; do
   # final answer, which is how the first v3 regression test "passed"
   # an empty answer in 1 round
   [ -z "$(printf '%s' "$ans" | tr -d ' \t')" ] && ans="[qwen: empty answer]"
-  echo "[agent] model: $ans"
+  echo "[agent $round/$maxround] $(short "$ans")"
 
   # task-echo guard: the plain base brain sometimes answers by
   # repeating the task back under its own "TASK:" label instead of
@@ -198,7 +221,7 @@ while [ $round -lt 9 ]; do
       *"TOOL remember "*)
         fact=$(printf '%s' "$ans" | sed 's/.*TOOL remember //')
         grep -qxF "$fact" /root/BRAIN.md 2>/dev/null || echo "$fact" >> /root/BRAIN.md
-        echo "[agent] remembered: $fact" ;;
+        echo "[agent] remembered: $(short "$fact")" ;;
       *) echo "[agent] reflection: nothing kept" ;;
     esac
     echo "$(date) | $task => $pending_final" >> /root/history
@@ -217,10 +240,32 @@ while [ $round -lt 9 ]; do
   case "$ans" in
     *"TOOL "*)
       if [ "$ans" = "$prev_ans" ]; then
-        echo "[agent] repeat call blocked: $ans"
+        echo "[agent] repeat call blocked: $(short "$ans")"
         prompt="$SYS TASK: $task RESULT: (you already sent that exact call last round and it was done - do NOT send it again. Send the NEXT step of your task as one line, or SAY: <final answer> if the task is finished)"
         continue
       fi
+      # two-step circle (A-B-A): the repeat check above only sees
+      # consecutive twins, so the brain ping-pongs two paraphrases
+      # to the round cap instead (seen live: TOOL recall memory /
+      # TOOL recall memory notebook history alternating, nothing
+      # found every time). The first lap earns a nudge; the second
+      # lap ends the session honestly instead of burning the rest.
+      if [ -n "$prev_ans2" ] && [ "$ans" = "$prev_ans2" ]; then
+        circles=$((circles + 1))
+        echo "[agent] circle detected ($circles): $(short "$ans")"
+        if [ $circles -ge 2 ]; then
+          echo "$(date) | $task => (circle) $prev_out" >> /root/history
+          echo "AGENT_ANSWER: (going in circles - repeated the same searches with no new results; last result: $prev_out)"
+          echo "[agent] stopped: circle, no progress"
+          exit 1
+        fi
+        prompt="$SYS TASK: $task RESULT: (you are going in circles - that call was already tried and changed nothing. Do a DIFFERENT step now, or SAY: <final answer> with what you actually found)"
+        prev_ans2="$prev_ans"
+        prev_ans="$ans"
+        continue
+      fi
+      circles=0
+      prev_ans2="$prev_ans"
       prev_ans="$ans" ;;
   esac
 
@@ -383,7 +428,7 @@ while [ $round -lt 9 ]; do
       empties=0; toolcalls=$((toolcalls + 1))
       cmd=$(printf '%s' "$ans" | sed 's/.*TOOL run //')
       if deny "$cmd"; then
-        echo "[agent] refused (denylist): $cmd"
+        echo "[agent] refused (denylist): $(short "$cmd")"
         result_prompt "(refused by the harness: that command is on the safety denylist - it can destroy the system. do something else)"
         continue
       fi
@@ -413,8 +458,7 @@ while [ $round -lt 9 ]; do
       [ -z "$out" ] && out="(command ran, no output, exit $st)"
       prev_cmd="$cmd"
       prev_out="$out"
-      echo "[agent] ran: $cmd"
-      echo "[agent] result: $out"
+      echo "[agent $round/$maxround] run: $(short "$cmd") => $(short "$out")"
       result_prompt "$out"
       ;;
     *"SAY: "*)
@@ -459,5 +503,5 @@ while [ $round -lt 9 ]; do
 done
 echo "$(date) | $task => (round limit) $prev_out" >> /root/history
 echo "AGENT_ANSWER: (round limit reached) last tool result: $prev_out"
-echo "[agent] stopped: tool round limit (9) reached"
+echo "[agent] stopped: tool round limit ($maxround) reached"
 exit 1
