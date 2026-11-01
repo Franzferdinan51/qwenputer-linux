@@ -10,7 +10,7 @@ from ground truth in a final dump - never from the model's word:
                exists and a session answer reports 42
   2. skills    saveskill greeting                -> /root/skills/
                greeting.md on disk with the procedure in it
-  3. remember  remember ... Zorptown             -> /root/BRAIN.md
+  3. remember  remember ... Zorptown             -> /root/MEMORY.md
   4. recall    recall Zorptown (a NEW session)   -> its answer
                repeats what the memory says
   5. schedule  schedule every 45 ... then unschedule 1 in the same
@@ -65,7 +65,7 @@ TASKS = [
 ]
 DUMP = (b"echo APPS:; ls /root/apps; echo SKILLFILE:; "
         b"cat /root/skills/greeting.md; echo BRAINZ:; "
-        b"grep Zorptown /root/BRAIN.md; echo JOBSC:; "
+        b"grep Zorptown /root/MEMORY.md /root/USER.md; echo JOBSC:; "
         b"wc -l < /root/jobs; echo VERB\"DONE\"\n")
 
 

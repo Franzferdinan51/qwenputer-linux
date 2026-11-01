@@ -235,8 +235,8 @@ This fork now has the Doom port's medicine, transplanted:
 (`docs/agent-framework.md` has the full design and the debloat
 map; `docs/upstream-catalog.md` catalogues what upstream has
 that we don't). The harness intercepts verbs beside `run`:
-`remember` / `recall` (curated `/root/BRAIN.md` + grep over
-history), `schedule` / `jobs` / `unschedule` (the agent's own
+`remember` / `recall` (curated `/root/MEMORY.md` + `/root/USER.md`,
+grep over history), `schedule` / `jobs` / `unschedule` (the agent's own
 cron), `saveskill` / `skill` / `fixskill` (procedural memory in
 `/root/skills`), `saveapp` / `app` / `apps` (gap prosthetics —
 small programs the agent builds for itself, for itself only),

@@ -74,10 +74,11 @@ sees a slightly bigger verb set.
    shell; while the supervisor is not running, jobs wait.
 4. **Memory, layered the Hermes way**:
    - `/root/nb` — the notebook (exists): free-form working memory.
-   - `/root/BRAIN.md` — a small curated file (facts, standing
-     orders, lessons) that the harness folds into every wake-up
+   - `/root/MEMORY.md` — small curated agent notes (facts,
+     lessons) plus `/root/USER.md` — the user profile (prefs,
+     standing orders); the harness folds both into every wake-up
      prompt. This is recursive memory with an editor: the agent
-     maintains the file that maintains its context.
+     maintains the files that maintain its context.
    - `/root/jobs.log` — what its scheduled self actually did.
 5. **Skills (phase 2)**: `/root/skills/<name>` — shell procedures
    the agent writes for itself after solving something once, then
@@ -128,7 +129,7 @@ Mac (`~/.hermes/hermes-agent/`: `cron/`, `tools/cronjob_tools.py`,
   runs the shell checks first; the model wakes ONLY if a check
   flags something (also Hermes' monitor rule: no change, no
   model call)
-- layered memory → BRAIN.md (curated) + notebook + `/root/history`
+- layered memory → MEMORY.md + USER.md (curated) + notebook + `/root/history`
   (every finished task appended; recall = grep, no database)
 - approval safety → a harness denylist: destructive commands
   (`rm -rf /`, mkfs, dd to a device, fork bombs) are refused and
@@ -155,7 +156,7 @@ Mac (`~/.hermes/hermes-agent/`: `cron/`, `tools/cronjob_tools.py`,
      nudge "`TOOL fixskill <name> :: <what to do differently>`",
      appended to the skill as a dated CORRECTION section
   4. *memory upkeep* — a standing daily scheduled job: merge
-     duplicates in BRAIN.md, drop stale facts, keep BRAIN.md small
+     duplicates in MEMORY.md/USER.md, drop stale facts, keep both small
      (≈2,000 chars, upstream's discipline); the agent curates the
      file that curates its context
   5. *gap prosthetics* — the self-built apps of section 6
@@ -164,7 +165,7 @@ Mac (`~/.hermes/hermes-agent/`: `cron/`, `tools/cronjob_tools.py`,
 messaging platforms; voice, vision and browser tooling; the six
 terminal backends (there is one guest); subagent swarms (one
 level: a job IS a session); SQLite/FTS session search (grep wins
-at megabytes); Honcho user modeling (BRAIN.md is the user model);
+at megabytes); Honcho user modeling (USER.md is the user model);
 the RL/Atropos training plumbing (tunes here are separate and
 human-ordered); skills hub/sync (no network in the guest); the
 plugin/MCP machinery; the TUI (liveterm + the dashboard are the
@@ -192,7 +193,7 @@ faces this agent gets).
 
 - **P1**: `agentshell.sh` foreground supervisor + jobs file +
   `schedule`/`jobs`/`unschedule`/`remember`/`recall` verbs in
-  `agent.sh`, SOUL.md + BRAIN.md folded into wake-up prompts,
+  `agent.sh`, SOUL.md + MEMORY.md + USER.md folded into wake-up prompts,
   `/root/history` logging, the destructive-command denylist, plus
   a `schedtest.py` driver (create a job due in 1 minute through
   the supervisor, type nothing, watch it fire it, verify the file

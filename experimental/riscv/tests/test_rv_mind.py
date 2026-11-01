@@ -118,11 +118,13 @@ def test_fetch_wrapper_live_server():
 
 def test_mirror_parse_and_restore_roundtrip():
     fixture = ("agent> echo MINDMIR_BEGIN\r\nMINDMIR_BEGIN\r\n"
-               "===FILE /root/BRAIN.md\r\n[fact] a\r\n"
+               "===FILE /root/MEMORY.md\r\n[fact] a\r\n"
+               "===FILE /root/USER.md\r\n[pref] b\r\n"
                "===FILE /root/PLAN.md\r\n- [ ] s\r\n"
                "MINDMIR_END\r\nagent> \n")
     files = parse_snapshot(fixture)
-    assert files == {"/root/BRAIN.md": "[fact] a\n",
+    assert files == {"/root/MEMORY.md": "[fact] a\n",
+                     "/root/USER.md": "[pref] b\n",
                      "/root/PLAN.md": "- [ ] s\n"}
     try:
         parse_snapshot("nothing here")
@@ -131,14 +133,14 @@ def test_mirror_parse_and_restore_roundtrip():
     else:
         raise AssertionError("missing markers must raise")
     content = "a'b\"c$d `e` f\\g\n" + "0123456789\n" * 20
-    lines = chunk_restore("/root/BRAIN.md", content)
+    lines = chunk_restore("/root/MEMORY.md", content)
     assert all(len(l) < 900 for l in lines)
     d = tempfile.mkdtemp()
     adj = [l.replace("/root/", d + "/") for l in lines]
     p = d + "/do.sh"
     open(p, "w").write("\n".join(adj) + "\n")
     subprocess.run(["sh", p], check=True)
-    assert open(d + "/BRAIN.md").read() == content
+    assert open(d + "/MEMORY.md").read() == content
 
 
 def test_trace_parser_folds_delegate_turns_in_order():
@@ -210,7 +212,8 @@ def test_mind_reader_over_fixture_mirror(tmp_path):
     (root / "apps").mkdir()
     (tmp_path / "SNAPSHOT.txt").write_text("taken: 2026-11-01 12:00:00\n")
     (root / "jobs").write_text("9999999999|45|0|never run|probe job\n")
-    (root / "BRAIN.md").write_text("[fact] a\n[lesson] b\n")
+    (root / "MEMORY.md").write_text("[fact] a\n[lesson] b\n")
+    (root / "USER.md").write_text("[pref] c\n")
     (root / "FAILURES.md").write_text("f1\n")
     (root / "PLAN.md").write_text("- [x] done\n- [ ] todo\n")
     (root / "nb" / "2026-11-01.md").write_text("n\n")
@@ -221,7 +224,7 @@ def test_mind_reader_over_fixture_mirror(tmp_path):
     assert m["present"] and m["taken"] == "2026-11-01 12:00:00"
     assert len(m["jobs"]) == 1 and m["jobs"][0]["task"] == "probe job"
     assert m["jobs"][0]["due_in_s"] > 0
-    assert m["brain_lines"] == 2 and m["failures_lines"] == 1
+    assert m["brain_lines"] == 3 and m["failures_lines"] == 1
     assert m["nb_days"] == 1
     assert m["skills"] == [{"name": "s1", "preview": "body one"}]
     assert m["apps"] == [{"name": "ap1", "preview": "echo hi"}]

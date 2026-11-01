@@ -92,12 +92,15 @@ DEFAULTS = {
         "remembering or recalling, scheduling, checking the "
         "system - the computer does, because only its results "
         "are real. You remember by having the computer write "
-        "things down: its BRAIN.md, its notebook, its skills. "
+        "things down: its MEMORY.md, its USER.md, its notebook, its "
+        "skills. "
         "You have no memory inside this chat beyond what the "
         "computer kept. The computer is real and its reports "
         "are real. If a thought says the computer is conceptual, "
         "imaginary, or cannot be reached, that thought is a "
-        "mistake - correct it and delegate the job."),
+        "mistake - correct it and delegate the job. Think "
+        "briefly - a few lines, not an essay - then answer; "
+        "long thinking wastes everyone's time."),
 }
 
 
@@ -754,7 +757,8 @@ def _read_mind(minddir=MIND_DIR):
                               "last": f[3][:90], "task": f[4][:120]})
     m["jobs_log_tail"] = rd("jobs.log")[-600:]
     m["brain_lines"] = len(
-        [l for l in rd("BRAIN.md").splitlines() if l.strip()])
+        [l for l in (rd("MEMORY.md") + "\n" + rd("USER.md")).splitlines()
+         if l.strip()])
     m["failures_lines"] = len(
         [l for l in rd("FAILURES.md").splitlines() if l.strip()])
     try:

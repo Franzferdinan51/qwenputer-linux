@@ -27,7 +27,7 @@ is confirmed missing, and what to build in which order.
 ## What exists today (the foundation)
 
 15-round agent loop with echo/repeat/circle/loop guards; layered
-memory (BRAIN.md + /root/nb notebook + /root/history); skills
+memory (MEMORY.md + USER.md + /root/nb notebook + /root/history); skills
 (save/skill/fix); self-built gap apps; scheduled jobs + heartbeat
 checks with continuity; one-turn reflection after ≥4 tool calls;
 seat models (Qwen 3.5 4B, QWEN_MODEL/QWEN_FAMILY seatable, GGUF-safe);

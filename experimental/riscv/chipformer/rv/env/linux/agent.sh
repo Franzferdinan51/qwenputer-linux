@@ -9,8 +9,9 @@
 # What the brain can say (the harness intercepts everything except
 # run - none of these cost a shell eval):
 #   TOOL run <command>            run a busybox command, get RESULT
-#   TOOL remember <fact>          keep a fact in /root/BRAIN.md
-#   TOOL recall <words>           search BRAIN.md, the notebook, history
+#   TOOL remember <fact>          keep a note in /root/MEMORY.md
+#   TOOL remember-user <fact>     keep a user fact in /root/USER.md
+#   TOOL recall <words>           search MEMORY.md, USER.md, notebook, history
 #   TOOL schedule <min> <task>    run a task once, in <min> minutes
 #   TOOL schedule every <min> <task>
 #   TOOL jobs                     list scheduled jobs
@@ -49,11 +50,11 @@
 # input past ~1021 chars on a single line (measured 2026-10-31: a
 # 1300-char line arrived as exactly 1021). No line fed to the guest -
 # in this file or any install - may approach that limit.
-SYS='Answer with exactly one line, no explanation. Verbs: TOOL run <busybox command> - run a command, you get its output as RESULT. TOOL remember <fact> - keep a fact in your long-term memory. TOOL recall <words> - search your memory, notebook and history. TOOL schedule <minutes> <task> - do a task later; TOOL schedule every <minutes> <task> repeats it. TOOL jobs / TOOL unschedule <n>. TOOL saveskill <name> :: <procedure> - save how to do something, so future you knows; TOOL skill <name> loads one back; check TOOL skills before inventing an approach. TOOL saveapp <name> :: <one-line shell program> - build yourself a small app when you hit a gap (bad at something? make a tool for it once, use it forever); TOOL app <name> <args> runs it; TOOL apps lists them.'
-SYS="$SYS"' SAY: <answer> - finish, and SAY only reports what a RESULT showed you. Claiming is not doing: remembering, saving and building happen ONLY through their TOOL verbs - if you did not send the verb, it did not happen. You have a whole linux system: files persist, agentshell runs your scheduled jobs, your memory is /root/BRAIN.md, notebook /root/nb. Examples - task "multiply 123456789 by 987654321 exactly": TOOL run echo $((123456789 * 987654321)). Task "check the disk every 30 minutes": TOOL schedule every 30 check disk space with df and remember the result. Task "remember my favorite fruit is kiwi": TOOL remember the favorite fruit is kiwi. Task "make /tmp/hi.txt containing hello, then read it back": TOOL run echo hello > /tmp/hi.txt and after the result TOOL run cat /tmp/hi.txt then SAY: what the file says.'
+SYS='Answer with exactly one line, no explanation. Verbs: TOOL run <busybox command> - run a command, you get its output as RESULT. TOOL remember <fact> - keep a note in MEMORY.md. TOOL remember-user <fact> - keep a user fact in USER.md. TOOL recall <words> - search memory, notebook and history. TOOL schedule <minutes> <task> - do a task later; TOOL schedule every <minutes> <task> repeats it. TOOL jobs / TOOL unschedule <n>. TOOL saveskill <name> :: <procedure> - save how to do something, so future you knows; TOOL skill <name> loads one back; check TOOL skills before inventing an approach. TOOL saveapp <name> :: <one-line shell program> - build yourself a small app when you hit a gap (bad at something? make a tool for it once, use it forever); TOOL app <name> <args> runs it; TOOL apps lists them.'
+SYS="$SYS"' SAY: <answer> - finish, and SAY only reports what a RESULT showed you. Claiming is not doing: remembering, saving and building happen ONLY through their TOOL verbs - if you did not send the verb, it did not happen. You have a whole linux system: files persist, agentshell runs your scheduled jobs, your notes are /root/MEMORY.md, the user profile is /root/USER.md, notebook /root/nb. Examples - task "multiply 123456789 by 987654321 exactly": TOOL run echo $((123456789 * 987654321)). Task "check the disk every 30 minutes": TOOL schedule every 30 check disk space with df and remember the result. Task "remember my favorite fruit is kiwi": TOOL remember-user the favorite fruit is kiwi. Task "make /tmp/hi.txt containing hello, then read it back": TOOL run echo hello > /tmp/hi.txt and after the result TOOL run cat /tmp/hi.txt then SAY: what the file says.'
 SYS="$SYS"' Helpers: TOOL run nb add <note> keeps a dated notebook note, TOOL run nb search <words> finds notes back; TOOL run calc <integer expression> does exact arithmetic.'
-SYS="$SYS"' Memory sections: tag facts [fact] [pref] [lesson] or [project:name] (untagged saves as [fact]); TOOL recall in:lesson <words> searches one section; TOOL forget <words> drops matching memory lines.'
-SYS="$SYS"' THINK: <thought> thinks out loud (max 6 a session, not an action). TOOL delegate <subtask> runs one fenced sub-agent and returns its report (one level only). TOOL plan :: s1; s2; s3 writes steps, TOOL plan done <n> checks one off, pending steps ride along until done. TOOL fetch <url> fetches an http(s) page through the host.'
+SYS="$SYS"' Memory: MEMORY.md notes tagged [fact] [lesson] or [project:name] (untagged saves as [fact]); USER.md takes user facts; TOOL recall in:lesson <words> or in:pref searches one place; TOOL forget <words> drops matching lines from both.'
+SYS="$SYS"' THINK: <thought> thinks out loud, briefly (max 6 a session, not an action). Keep all thinking short - a few lines - then act; long thinking wastes your reply budget. TOOL delegate <subtask> runs one fenced sub-agent and returns its report (one level only). TOOL plan :: s1; s2; s3 writes steps, TOOL plan done <n> checks one off, pending steps ride along until done. TOOL fetch <url> fetches an http(s) page through the host.'
 
 qwen_ask() {
   # the prompt must go to the CONSOLE, not stdout: this function is called
@@ -193,20 +194,33 @@ trap 'rm -f /tmp/agent.runs.$$ /tmp/agent.think.$$ /tmp/PLAN.$$' EXIT INT TERM
 fi
 
 mkdir -p /root/nb /root/skills /root/apps
+# Hermes-name migration (once): BRAIN.md splits into MEMORY.md (agent
+# notes) + USER.md (user prefs); the original stays as a backup
+if [ -f /root/BRAIN.md ] && [ ! -f /root/MEMORY.md ]; then
+  grep '^\[pref\]' /root/BRAIN.md 2>/dev/null > /root/USER.md
+  grep -v '^\[pref\]' /root/BRAIN.md 2>/dev/null > /root/MEMORY.md
+  mv /root/BRAIN.md /root/BRAIN.md.migrated
+fi
 # wake-up context: identity + curated memory fold into the first
 # prompt only, size-capped (Hermes keeps memory small on purpose -
 # curation over bulk)
-soul=""; brain=""; pitfalls=""
+soul=""; brain=""; userprof=""; pitfalls=""
 [ -f /root/SOUL.md ] && soul=$(head -c 300 /root/SOUL.md | tr '\n' ' ')
-if [ -f /root/BRAIN.md ]; then
+if [ -f /root/MEMORY.md ]; then
   # structured memory: the newest lines per section, so one chatty
   # section can't crowd the others out of the wake-up prompt
-  brain=$({ for s in fact pref lesson; do grep "^\[$s\]" /root/BRAIN.md 2>/dev/null | tail -2; done; grep '^\[project:' /root/BRAIN.md 2>/dev/null | tail -2; grep -v '^\[' /root/BRAIN.md 2>/dev/null | tail -2; } | tr '\n' ' ' | head -c 700)
+  brain=$({ for s in fact lesson; do grep "^\[$s\]" /root/MEMORY.md 2>/dev/null | tail -2; done; grep '^\[project:' /root/MEMORY.md 2>/dev/null | tail -2; grep -v '^\[' /root/MEMORY.md 2>/dev/null | tail -2; } | tr '\n' ' ' | head -c 700)
+  brain="$(wc -c < /root/MEMORY.md 2>/dev/null || echo 0)/2200 chars: $brain"
+fi
+if [ -f /root/USER.md ]; then
+  userprof=$(head -c 500 /root/USER.md | tr '\n' ' ')
+  userprof="$(wc -c < /root/USER.md 2>/dev/null || echo 0)/1375 chars: $userprof"
 fi
 [ -f /root/FAILURES.md ] && pitfalls=$(tail -5 /root/FAILURES.md | tr '\n' ' ' | head -c 300)
 prompt="$SYS"
 [ -n "$soul" ] && prompt="$prompt YOU: $soul"
 [ -n "$brain" ] && prompt="$prompt MEMORY: $brain"
+[ -n "$userprof" ] && prompt="$prompt USER: $userprof"
 [ -n "$pitfalls" ] && prompt="$prompt PITFALLS (do not repeat these): $pitfalls"
 pp0=$(plan_pending); [ -n "$pp0" ] && prompt="$prompt Pending plan steps: $pp0"
 prompt="$prompt TASK: $task"
@@ -299,8 +313,12 @@ while [ $round -lt $maxround ]; do
           echo "[agent] skill saved: $name"; kept=1 ;;
         *"TOOL remember "*)
           fact=$(printf '%s' "$ans" | sed 's/.*TOOL remember //')
-          grep -qxF "$fact" /root/BRAIN.md 2>/dev/null || echo "$fact" >> /root/BRAIN.md
+          grep -qxF "$fact" /root/MEMORY.md 2>/dev/null || echo "$fact" >> /root/MEMORY.md
           echo "[agent] remembered: $(short "$fact")"; kept=1 ;;
+        *"TOOL remember-user "*)
+          fact=$(printf '%s' "$ans" | sed 's/.*TOOL remember-user //')
+          grep -qxF "$fact" /root/USER.md 2>/dev/null || echo "$fact" >> /root/USER.md
+          echo "[agent] remembered (user): $(short "$fact")"; kept=1 ;;
       esac
       case "$ans" in
         *"SAY: "*)
@@ -374,8 +392,14 @@ while [ $round -lt $maxround ]; do
         "["*) : ;;
         *) fact="[fact] $fact" ;;
       esac
-      grep -qxF "$fact" /root/BRAIN.md 2>/dev/null || echo "$fact" >> /root/BRAIN.md
+      grep -qxF "$fact" /root/MEMORY.md 2>/dev/null || echo "$fact" >> /root/MEMORY.md
       result_prompt "remembered: $fact (it is in your long-term memory now)"
+      ;;
+    *"TOOL remember-user "*)
+      empties=0
+      fact=$(printf '%s' "$ans" | sed 's/.*TOOL remember-user //')
+      grep -qxF "$fact" /root/USER.md 2>/dev/null || echo "$fact" >> /root/USER.md
+      result_prompt "remembered: $fact (it is in the user profile now)"
       ;;
     *"TOOL recall "*)
       empties=0
@@ -388,10 +412,16 @@ while [ $round -lt $maxround ]; do
       esac
       pat=$(printf '%s' "$words" | sed 's/ /|/g')
       if [ -n "$scope" ]; then
-        hits=$(grep -iE -e "^\[$scope\].*($pat)" /root/BRAIN.md 2>/dev/null | head -c 300 | tr '\n' ' ')
+        if [ "$scope" = "user" ]; then
+          hits=$(grep -iE -e "$pat" /root/USER.md 2>/dev/null | head -c 300 | tr '\n' ' ')
+        else
+          memf=/root/MEMORY.md
+          [ "$scope" = "pref" ] && memf=/root/USER.md
+          hits=$(grep -iE -e "^\[$scope\].*($pat)" $memf 2>/dev/null | head -c 300 | tr '\n' ' ')
+        fi
         [ -z "$hits" ] && hits="(nothing in [$scope] for: $words)"
       else
-        hits=$(grep -iE -e "$pat" /root/BRAIN.md /root/FAILURES.md /root/history /root/nb/* /root/skills/*.md 2>/dev/null | head -c 300 | tr '\n' ' ')
+        hits=$(grep -iE -e "$pat" /root/MEMORY.md /root/USER.md /root/FAILURES.md /root/history /root/nb/* /root/skills/*.md 2>/dev/null | head -c 300 | tr '\n' ' ')
         [ -z "$hits" ] && hits="(nothing found for: $words)"
       fi
       result_prompt "$hits"
@@ -400,12 +430,16 @@ while [ $round -lt $maxround ]; do
       empties=0
       words=$(printf '%s' "$ans" | sed 's/.*TOOL forget //')
       pat=$(printf '%s' "$words" | sed 's/ /|/g')
-      before=0; [ -f /root/BRAIN.md ] && before=$(wc -l < /root/BRAIN.md)
-      # exit 0 (lines left) or 1 (none left) both mean "pattern was
-      # valid, rewrite"; anything else (bad pattern) keeps the file
-      grep -viE -e "$pat" /root/BRAIN.md 2>/dev/null > /root/BRAIN.md.tmp; st=$?
-      if [ $st -eq 0 ] || [ $st -eq 1 ]; then mv /root/BRAIN.md.tmp /root/BRAIN.md; else rm -f /root/BRAIN.md.tmp; fi
-      after=0; [ -f /root/BRAIN.md ] && after=$(wc -l < /root/BRAIN.md)
+      before=0
+      for memf in /root/MEMORY.md /root/USER.md; do
+        [ -f $memf ] && before=$((before + $(wc -l < $memf)))
+        # exit 0 (lines left) or 1 (none left) both mean "pattern was
+        # valid, rewrite"; anything else (bad pattern) keeps the file
+        grep -viE -e "$pat" $memf 2>/dev/null > $memf.tmp; st=$?
+        if [ $st -eq 0 ] || [ $st -eq 1 ]; then mv $memf.tmp $memf; else rm -f $memf.tmp; fi
+      done
+      after=0
+      for memf in /root/MEMORY.md /root/USER.md; do [ -f $memf ] && after=$((after + $(wc -l < $memf))); done
       result_prompt "forgot $((before - after)) line(s) matching: $words ($after left)"
       ;;
     *"TOOL schedule "*)

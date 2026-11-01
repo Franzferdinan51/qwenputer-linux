@@ -36,7 +36,7 @@ INSTALL = (
 VERIFY = b"md5sum /tmp/ask /tmp/agent; echo MD5\"CHK\"\n"
 HASHES = [hashlib.md5(ASK.encode()).hexdigest().encode(),
           hashlib.md5(AGENT.encode()).hexdigest().encode()]
-DUMP = (b"echo BRAINZ:; cat /root/BRAIN.md; echo PLANZ:; "
+DUMP = (b"echo BRAINZ:; cat /root/MEMORY.md /root/USER.md; echo PLANZ:; "
         b"cat /root/PLAN.md; echo SKILLZ:; "
         b"cat /root/skills/batskill.md; echo JOBSZ:; "
         b"wc -l < /root/jobs; echo BAT\"DONE\"\n")
@@ -50,7 +50,7 @@ TASKS = [
       "SAY: thought and did"]),
     ("remember",
      "remember that the battery color is blue, then say remembered",
-     ["TOOL remember [pref] battery color is blue",
+     ["TOOL remember-user [pref] battery color is blue",
       "SAY: remembered"]),
     ("recall",
      "search the pref section for blue, then say recall done",
