@@ -39,11 +39,17 @@ CALC_SH = (HERE / "env" / "linux" / "calc.sh").read_text()
 # guest at /root/SOUL.md and folded into wake-up prompts by
 # agent.sh (first ~300 chars carry identity + directness).
 SOUL_MD = (HERE / "env" / "linux" / "SOUL.md").read_text()
+# Seed skills (phase 3): the agent's starter library. Installed with
+# [ -f ] guards like SOUL.md - the agent may fixskill them, and a
+# reinstall must never clobber what it learned.
+SKILL_UPKEEP = (HERE / "env" / "linux" / "skills" / "upkeep.md").read_text()
+SKILL_PLAN = (HERE / "env" / "linux" / "skills" / "plan-long-task.md").read_text()
 # Every installed file feeds the guest through a <<'QWEOF' heredoc, so
 # each one must end with a newline - otherwise its last line glues
 # onto the QWEOF terminator, the heredoc never ends, and the rest of
 # the install (including the agentshell launch) is swallowed into it.
-for _name in ("ASK_SH", "AGENT_SH", "ASHELL_SH", "NB_SH", "CALC_SH", "SOUL_MD"):
+for _name in ("ASK_SH", "AGENT_SH", "ASHELL_SH", "NB_SH", "CALC_SH", "SOUL_MD",
+              "SKILL_UPKEEP", "SKILL_PLAN"):
     if not globals()[_name].endswith("\n"):
         globals()[_name] += "\n"
 
@@ -171,6 +177,8 @@ class MachineThread(threading.Thread):
             "/root/agentshell /tmp/nb /tmp/calc\n"
             "mkdir -p /root/nb /root/skills /root/apps\n"
             "[ -f /root/SOUL.md ] || cat > /root/SOUL.md <<'QWEOF'\n" + SOUL_MD + "QWEOF\n"
+            "[ -f /root/skills/upkeep.md ] || cat > /root/skills/upkeep.md <<'QWEOF'\n" + SKILL_UPKEEP + "QWEOF\n"
+            "[ -f /root/skills/plan-long-task.md ] || cat > /root/skills/plan-long-task.md <<'QWEOF'\n" + SKILL_PLAN + "QWEOF\n"
             "echo ASK_READY the agentshell takes the console now: shell commands and hermes-agent tasks run there, scheduled jobs fire on their own, exit returns here\n"
             "/tmp/agentshell\n"
         ).encode()

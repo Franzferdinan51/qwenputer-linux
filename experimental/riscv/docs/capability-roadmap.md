@@ -78,3 +78,22 @@ Endgame (context, not scheduled):
    from the internet.
 3. **Immortality upgrade** (9, 15, 11): survive reboots, measurable
    gains, tune the seat on its own traces.
+
+## Status (2026-11-01): all three phases built
+
+- Phase 1+2 guest verbs live in `env/linux/agent.sh` (`THINK:`,
+  critique/revise, `[section]` memory + `in:` recall, `forget`,
+  `delegate`, `plan`, `fetch`, `FAILURES.md` + PITFALLS); the upkeep
+  job self-seeds from `agentshell.sh`; host fetching rides the QWEN:
+  protocol via `qwenbackend.fetch_backend_wrapper` (no C change).
+- Phase 3 host tools: `mindmirror.py` (15-min LaunchAgent snapshots
+  to `~/qwenputer-test/mind`, restore via chunked printf),
+  `battery.py` (10 ground-truth tasks, JSON report + `--prev`
+  delta), `traceexport.py` (transcript -> tune episodes),
+  installer seed skills (`upkeep`, `plan-long-task`).
+- Proven: sims 41/41 (sh + dash), battery 10/10 on a scratch guest,
+  trace export 10 eps / 32 turns from the battery log, live snapshot
+  8 files, pytest 42/42.
+- Live note: the running guest keeps its boot-time scripts until the
+  next restart; the fetch wrapper and seed skills activate then. The
+  mirror timer runs now and needs nothing from the guest.
