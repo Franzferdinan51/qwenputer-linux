@@ -1047,11 +1047,11 @@ in-weights computer consults.</p>
 <section id="desktop" class="tab"><div class="cards">
 <div class="card"><h3>DESKTOP &mdash; NOT BUILT YET</h3>
 <p>no framebuffer build exists in this tree. the display path was
-proven elsewhere (the Doom port on the <code>circuit-grown-map</code>
-branch: guest draws in its memory, host shows it, keys go back in),
-and a framebuffer shell &mdash; a screen window in guest memory, a
-pointer, simple windows &mdash; is the planned spike. it will live
-in this tab when it lands.</p>
+proven by Duckets&rsquo; Doom port (<code>github.com/Franzferdinan51
+/qwenputer-doom</code>: guest draws in its memory, host shows it,
+keys go back in), and a framebuffer shell &mdash; a screen window in
+guest memory, a pointer, simple windows &mdash; is the planned spike.
+it will live in this tab when it lands.</p>
 <p class="dim">realistic on the fast core. on the in-weights circuit
 the same trick works mechanically (the mailbox proved host access to
 circuit memory) but at ~17 instructions/second a desktop is a
@@ -1071,7 +1071,7 @@ guest's own mind <span id="mindage"></span> &mdash;
 <p style="color:var(--dim)">these run in the guest &mdash; tap one to
 open the terminal.</p>
 <div class="cards" id="entryapps"></div>
-<h3 style="font-size:14px;letter-spacing:.05em;color:var(--acc)">RUNS UPSTREAM, NOT HERE</h3>
+<h3 style="font-size:14px;letter-spacing:.05em;color:var(--acc)">ELSEWHERE, NOT ON THIS MACHINE</h3>
 <div class="cards" id="upstream"></div></section>
 <section id="system" class="tab">
 <p style="color:var(--dim)">the weights-machine's own load &mdash;
@@ -1177,7 +1177,7 @@ const APPS=[['\u25b8','live terminal','the Qwen-Linux guest shell itself — eve
 ['\u2595','notebook','the guest\u2019s dated notes at /root/nb — the agent writes plans and facts there and reads them back','nb list','nb list'],
 ['\u2206','calc','exact integer arithmetic for the agent (no bc/awk/python in the guest)','calc \u2019123456789 * 987654321\u2019','calc 123456789*987654321']];
 const UPSTREAM=[['\u03bb','MicroPython on the CPU','Python running on the Qwenputer CPU — the upstream port, proven on the reference model, not installed here.','huggingface.co/divagr1925/Qwen3.5-4B-Qwenputer'],
-['\u25e9','Doom port','the Doom port that proved the display path — on the circuit-grown-map branch, not in this tree.','github.com/divagr18/qwenputer'],
+['\u25e9','Doom on Qwenputer','Duckets\u2019 Doom port (doomgeneric) for the CPU inside the weights — proven on the reference machine: title screen, menu, E1M1 rendering. Ships a native fast runner and a playable live view; the in-weights circuit run is next.','github.com/Franzferdinan51/qwenputer-doom'],
 ['\u25c8','bare-metal agent','agent.c — the harness compiled for the circuit itself: store / recall / mul through the mailbox in RAM. source ships in this tree (env/progs/agent.c), runs via bareagent.py on the circuit.','env/progs/agent.c']];
 function escH(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 $('entryapps').innerHTML=APPS.map((a,i)=>'<div class="app"><div><span class="ico">'
