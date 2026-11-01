@@ -13,8 +13,8 @@ works right in the guest.
     python3 -m chipformer.rv.liveterm Image [--port 8951]
         [--backend lmstudio|echo|off] [--lm-url URL]
 
-Stdlib only. Binds 0.0.0.0 - on Duckets' Mac that means the tailnet
-address is the one to open (http://100.68.208.113:8951).
+Stdlib only. Binds 0.0.0.0 - open it via this machine's LAN
+address (or its tailnet address, if one is up).
 """
 
 import argparse

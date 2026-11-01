@@ -244,8 +244,8 @@ TASK_HINT = (
 )
 
 
-# --- guest delegation queue (Duckets, 2026-11-01: "the computer
-# said it was busy") ---
+# --- guest delegation queue (2026-11-01: the computer said it was
+# busy, so requests queue instead of being refused) ---
 # The computer is one console and it is slow; several chat turns (or
 # a chat turn plus the user typing in the Terminal tab) contend for
 # it. Delegations therefore line up in a strict FIFO instead of
@@ -337,8 +337,8 @@ def _guest_task(task, send):
                 "was NOT done. Tell the user the computer is still "
                 "busy and to try again shortly.)" % (budget // 60))
     try:
-        # Readiness wait (was an instant gate 2026-10-31, Duckets'
-        # "chat sits working while the brain runs" report): hand
+        # Readiness wait (was an instant gate 2026-10-31; a live
+        # report showed chat sitting idle while the brain ran): hand
         # over ONLY when the terminal is actually sitting at the
         # agentshell prompt. Typing a job into a console that is
         # still installing, mid-session, or at a plain shell queues
@@ -1047,7 +1047,7 @@ in-weights computer consults.</p>
 <section id="desktop" class="tab"><div class="cards">
 <div class="card"><h3>DESKTOP &mdash; NOT BUILT YET</h3>
 <p>no framebuffer build exists in this tree. the display path was
-proven by Duckets&rsquo; Doom port (<code>github.com/Franzferdinan51
+proven by the Doom port (<code>github.com/Franzferdinan51
 /qwenputer-doom</code>: guest draws in its memory, host shows it,
 keys go back in), and a framebuffer shell &mdash; a screen window in
 guest memory, a pointer, simple windows &mdash; is the planned spike.
@@ -1075,7 +1075,7 @@ open the terminal.</p>
 <div class="cards" id="upstream"></div></section>
 <section id="system" class="tab">
 <p style="color:var(--dim)">the weights-machine's own load &mdash;
-guest CPU/RAM from its <code>/proc</code>, never this Mac.
+guest CPU/RAM from its <code>/proc</code> &mdash; never the host.
 <span id="sysage"></span></p>
 <div class="cards">
 <div class="card"><h3>GUEST CPU</h3>
@@ -1177,7 +1177,7 @@ const APPS=[['\u25b8','live terminal','the Qwen-Linux guest shell itself — eve
 ['\u2595','notebook','the guest\u2019s dated notes at /root/nb — the agent writes plans and facts there and reads them back','nb list','nb list'],
 ['\u2206','calc','exact integer arithmetic for the agent (no bc/awk/python in the guest)','calc \u2019123456789 * 987654321\u2019','calc 123456789*987654321']];
 const UPSTREAM=[['\u03bb','MicroPython on the CPU','Python running on the Qwenputer CPU — the upstream port, proven on the reference model, not installed here.','huggingface.co/divagr1925/Qwen3.5-4B-Qwenputer'],
-['\u25e9','Doom on Qwenputer','Duckets\u2019 Doom port (doomgeneric) for the CPU inside the weights — proven on the reference machine: title screen, menu, E1M1 rendering. Ships a native fast runner and a playable live view; the in-weights circuit run is next.','github.com/Franzferdinan51/qwenputer-doom'],
+['\u25e9','Doom on Qwenputer','The Doom port (doomgeneric) for the CPU inside the weights — proven on the reference machine: title screen, menu, E1M1 rendering. Ships a native fast runner and a playable live view; the in-weights circuit run is next.','github.com/Franzferdinan51/qwenputer-doom'],
 ['\u25c8','bare-metal agent','agent.c — the harness compiled for the circuit itself: store / recall / mul through the mailbox in RAM. source ships in this tree (env/progs/agent.c), runs via bareagent.py on the circuit.','env/progs/agent.c']];
 function escH(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 $('entryapps').innerHTML=APPS.map((a,i)=>'<div class="app"><div><span class="ico">'
@@ -1468,7 +1468,7 @@ async function sysTick(){
   gauge($('gauge-cpu'),g.cpu_pct);
   gauge($('gauge-ram'),g.mem_total_kb?Math.round((g.mem_total_kb-(g.mem_avail_kb||0))/g.mem_total_kb*100):null);
   $('sys-load').textContent=g.load1==null?('waiting \u2014 '+(g.last_try||'first sample soon')):('load 1m: '+g.load1);
-  $('sys-mem').textContent=g.mem_total_kb?Math.round((g.mem_total_kb-(g.mem_avail_kb||0))/1024)+' of '+Math.round(g.mem_total_kb/1024)+' MB used · guest RAM, not this Mac':'waiting for first sample\u2026';
+  $('sys-mem').textContent=g.mem_total_kb?Math.round((g.mem_total_kb-(g.mem_avail_kb||0))/1024)+' of '+Math.round(g.mem_total_kb/1024)+' MB used · guest RAM':'waiting for first sample\u2026';
   $('sys-engine').textContent=(g.steps==null?'engine steps: this liveterm predates /api/stats — live after its next restart':(Number(g.steps).toLocaleString()+' steps retired'+(g.steps_per_s==null?'':' · '+Number(g.steps_per_s).toLocaleString()+'/s')));
   $('sys-console').textContent='console traffic '+(g.console_bps||0)+' B/s · terminal '+(j.terminal_up?'up':'down');
   const gr=j.grown||{},st=j.stock||{};
@@ -1703,7 +1703,7 @@ class Handler(BaseHTTPRequestHandler):
             out.append({"role": "system",
                         "content": (sysp + "\n" + TASK_HINT).strip()})
             out.extend(msgs)
-            # chat-time computer use (Duckets, 2026-10-31): the model
+            # chat-time computer use (2026-10-31): the model
             # may answer a message with a TASK: line instead of text.
             # That line is typed into the live terminal guest - the
             # same console the user sees - where the agentshell runs
@@ -1720,8 +1720,8 @@ class Handler(BaseHTTPRequestHandler):
                 # explaining itself ("just ask! TASK: ..."), and
                 # each mention silently retracted the user's answer
                 # and burned a guest wait + more generation rounds
-                # - Duckets' "chat sits working while the brain
-                # runs" report, 2026-10-31. A mention is prose, not
+                # - the 2026-10-31 live report ("chat sits working
+                # while the brain runs"). A mention is prose, not
                 # a handover.
                 task = None
                 lead = content.strip()
