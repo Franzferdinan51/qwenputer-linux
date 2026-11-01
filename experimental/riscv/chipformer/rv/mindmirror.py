@@ -27,7 +27,8 @@ RESTORED = "MINDMIR_RESTORED"
 SNAPSHOT_CMD = (
     "echo %s; "
     "for f in /root/BRAIN.md /root/FAILURES.md /root/SOUL.md /root/jobs "
-    "/root/jobs.log /root/history /root/HEARTBEAT.md /root/PLAN.md; do "
+    "/root/jobs.log /root/history /root/HEARTBEAT.md /root/PLAN.md "
+    "/root/agentd.off; do "
     'echo "===FILE $f"; cat "$f" 2>/dev/null; done; '
     "for f in /root/nb/* /root/skills/*.md /root/apps/*; do "
     '[ -f "$f" ] || continue; echo "===FILE $f"; cat "$f"; done; '

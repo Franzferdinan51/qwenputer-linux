@@ -296,6 +296,20 @@ def main() -> int:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif self.path == "/api/stats":
+                # engine counters for the dashboard's System tab: guest
+                # CPU steps retired + console bytes out (dashboard
+                # samples these into steps/s and B/s rates)
+                with mt.lock:
+                    steps = int(getattr(mt.m, "steps", 0) or 0)
+                    outb = len(getattr(mt.m, "out", b"") or b"")
+                body = json.dumps(
+                    {"steps": steps, "out_bytes": outb}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self.send_response(404)
                 self.end_headers()

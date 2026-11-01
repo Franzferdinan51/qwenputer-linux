@@ -2,7 +2,11 @@
 scripts, the host fetch wrapper behaves (against a local HTTP
 server, no internet), and the mirror/trace pure functions round-trip.
 Behavioral sims live in /tmp/mind_sim.sh; the 10-task ground-truth
-battery is chipformer.rv.battery (needs a guest image)."""
+battery is chipformer.rv.battery (needs a guest image).
+
+Web UI guards: the sysstat parser, the mind reader over a fixture
+mirror, the new settings keys, and the page's element-id contract
+(every id the script touches exists in the markup)."""
 
 import subprocess
 import tempfile
@@ -11,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import chipformer.rv.liveterm as LT
+from chipformer.rv import dashboard as DB
 from chipformer.rv import qwenbackend as qb
 from chipformer.rv.mindmirror import chunk_restore, parse_snapshot
 from chipformer.rv.traceexport import parse_episodes
@@ -162,3 +167,75 @@ def test_trace_parser_brackets_ask_children():
     assert len(eps) == 1
     assert eps[0]["answer"] == "filed" and eps[0]["sub"] is True
     assert len(eps[0]["turns"]) == 1
+
+
+def test_sysstat_parser_reads_live_shaped_reply():
+    text = ("QWSYSB\r\nMemTotal:          62836 kB\r\n"
+            "MemFree:           55512 kB\r\n"
+            "MemAvailable:      54148 kB\r\n"
+            "cpu  11604 0 99452 235862 0 0 1028 0 0 0\r\n"
+            "0.57 0.28 0.24 1/17 337\r\nQWSYSE\r\n")
+    p = DB._parse_sysstat(text)
+    assert p["mem_total_kb"] == 62836
+    assert p["mem_avail_kb"] == 54148
+    assert p["cpu"] == (11604 + 99452 + 235862 + 1028, 235862)
+    assert p["load1"] == 0.57
+    try:
+        DB._parse_sysstat("nothing here")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("missing markers must raise")
+
+
+def test_mind_reader_over_fixture_mirror(tmp_path):
+    root = tmp_path / "root"
+    (root / "nb").mkdir(parents=True)
+    (root / "skills").mkdir()
+    (root / "apps").mkdir()
+    (tmp_path / "SNAPSHOT.txt").write_text("taken: 2026-11-01 12:00:00\n")
+    (root / "jobs").write_text("9999999999|45|0|never run|probe job\n")
+    (root / "BRAIN.md").write_text("[fact] a\n[lesson] b\n")
+    (root / "FAILURES.md").write_text("f1\n")
+    (root / "PLAN.md").write_text("- [x] done\n- [ ] todo\n")
+    (root / "nb" / "2026-11-01.md").write_text("n\n")
+    (root / "skills" / "s1.md").write_text("# skill: s1\nsaved: x\nbody one\n")
+    (root / "apps" / "ap1").write_text("#!/bin/sh\n# built\n echo hi\n")
+    (root / "agentd.off").write_text("")
+    m = DB._read_mind(str(tmp_path))
+    assert m["present"] and m["taken"] == "2026-11-01 12:00:00"
+    assert len(m["jobs"]) == 1 and m["jobs"][0]["task"] == "probe job"
+    assert m["jobs"][0]["due_in_s"] > 0
+    assert m["brain_lines"] == 2 and m["failures_lines"] == 1
+    assert m["nb_days"] == 1
+    assert m["skills"] == [{"name": "s1", "preview": "body one"}]
+    assert m["apps"] == [{"name": "ap1", "preview": "echo hi"}]
+    assert (m["plan_total"], m["plan_pending"]) == (2, 1)
+    assert m["upkeep_paused"] is True
+    assert DB._read_mind(str(tmp_path / "nope"))["present"] is False
+
+
+def test_settings_new_keys_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(DB, "SETTINGS_PATH", str(tmp_path / "s.json"))
+    s = DB.save_settings({"guest_enabled": False, "guest_budget": 90,
+                          "temperature": 0.2, "max_tokens": 100})
+    assert s["guest_enabled"] is False and s["guest_budget"] == 90
+    s = DB.save_settings({"guest_budget": 99999})
+    assert s["guest_budget"] == 3600
+    s = DB.save_settings({"guest_budget": 5})
+    assert s["guest_budget"] == 60
+
+
+def test_page_id_contract_and_tabs():
+    import re
+    need = set(re.findall(r"\$\('([^']+)'\)", DB.PAGE))
+    have = set(re.findall(r'id="([^"]+)"', DB.PAGE))
+    assert need - have == set()
+    for tab in ("overview", "chat", "terminal", "desktop", "apps",
+                "system", "settings"):
+        assert 'data-t="%s"' % tab in DB.PAGE
+        assert 'id="%s"' % tab in DB.PAGE
+    for wid in ("gauge-cpu", "gauge-ram", "spark", "builtapps",
+                "skills", "jobs", "upstream", "viztip", "t-cpu", "t-ram",
+                "s-guest", "s-budget", "actsnap", "acttrace", "actupkeep"):
+        assert 'id="%s"' % wid in DB.PAGE, wid
