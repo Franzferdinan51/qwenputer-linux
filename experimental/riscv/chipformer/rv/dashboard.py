@@ -875,6 +875,8 @@ iframe{width:100%;height:72vh;border:1px solid var(--line);border-radius:10px;
 background:#000}
 #viz{width:100%;height:250px;display:block;background:#0a0d12;
 border:1px solid var(--line);border-radius:10px;cursor:pointer}
+#vizbig{width:100%;height:420px;display:block;background:#0a0d12;
+border:1px solid var(--line);border-radius:10px;cursor:grab}
 #viztip{position:fixed;display:none;background:var(--card);color:var(--tx);
 border:1px solid var(--acc);border-radius:8px;padding:6px 10px;font-size:12px;
 z-index:60;pointer-events:none;max-width:260px;box-shadow:var(--shadow)}
@@ -901,6 +903,7 @@ code{background:var(--code);padding:1px 6px;border-radius:5px}
 </header>
 <nav>
 <button data-t="overview" class="on">Overview</button>
+<button data-t="activity">Activity</button>
 <button data-t="chat">Chat</button>
 <button data-t="terminal">Terminal</button>
 <button data-t="desktop">Desktop</button>
@@ -957,6 +960,21 @@ it can use the whole Linux side: files, the notebook at
 <p class="dim">Qwen-Linux on the fast core &mdash; full guest shell,
 <code>ask "a question"</code> talks to the weights.</p></div>
 </div></section>
+<section id="activity" class="tab">
+<div class="card"><h3>ACTIVITY &mdash; INTERACTIVE</h3>
+<p class="dim" id="vizstats">&hellip;</p>
+<canvas id="vizbig" width="900" height="420"></canvas>
+<div class="toolbar" style="margin-top:10px;margin-bottom:0">
+<button class="btnsm" id="vizpause">pause</button>
+<button class="btnsm" id="vizreset">reset view</button>
+<span class="sp"></span>
+<span class="dim">drag to spin &middot; scroll to zoom &middot; hover orbs for numbers &middot; click an orb to open its tab</span>
+</div>
+<p class="dim">the same live pulses as Overview: amber hands a job
+brain&nbsp;&rarr;&nbsp;computer, blue reports back, white flashes for
+the circuit experiment. amber ticks under the computer orb are queued
+jobs.</p></div>
+</section>
 <section id="chat" class="tab">
 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
 <button class="chip" data-q="Explain what you are, in one short paragraph.">what are you?</button>
@@ -1288,27 +1306,84 @@ function vizOrbAt(cx,cy){const dx=cx-225,dy=cy-118;
  const ex=cx-665,ey=cy-118;
  if(ex*ex+ey*ey<80*80)return 'computer';
  return null;}
-$('viz').addEventListener('mousemove',e=>{
- const r=$('viz').getBoundingClientRect();
- const x=(e.clientX-r.left)*900/r.width,y=(e.clientY-r.top)*250/r.height;
- const o=vizOrbAt(x,y),tip=$('viztip');
- if(!o){tip.style.display='none';return;}
- let t='';
+function orbTip(o){
  if(o==='brain'){const m=($('seatmodel')||{}).textContent||'?';
-  t='BRAIN — '+(m||'?')+' · chat '+(viz.lastAct&&viz.lastAct.chat_open?'live now':'idle');}
- else{const a=viz.lastAct||{},g=(viz.lastSys&&viz.lastSys.guest)||{};
-  t='COMPUTER — '+(a.guest_active?('working'+(a.guest_task?': '+a.guest_task:'')):'idle')
+  return 'BRAIN — '+(m||'?')+' · chat '+(viz.lastAct&&viz.lastAct.chat_open?'live now':'idle');}
+ const a=viz.lastAct||{},g=(viz.lastSys&&viz.lastSys.guest)||{};
+ return 'COMPUTER — '+(a.guest_active?('working'+(a.guest_task?': '+a.guest_task:'')):'idle')
   +(a.guest_queue?(' · '+a.guest_queue+' queued'):'')
   +(g.cpu_pct==null?'':(' · CPU '+g.cpu_pct+'%'))
   +(g.mem_total_kb?(' · RAM '+Math.round((g.mem_total_kb-(g.mem_avail_kb||0))/1024)+'/'+Math.round(g.mem_total_kb/1024)+'M'):'');}
+function showTip(e,t){const tip=$('viztip');
  tip.textContent=t+' (click to open)';
- tip.style.display='block';tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY+10)+'px';});
+ tip.style.display='block';tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY+10)+'px';}
+$('viz').addEventListener('mousemove',e=>{
+ const r=$('viz').getBoundingClientRect();
+ const o=vizOrbAt((e.clientX-r.left)*900/r.width,(e.clientY-r.top)*250/r.height);
+ if(!o){$('viztip').style.display='none';return;}
+ showTip(e,orbTip(o));});
 $('viz').addEventListener('mouseleave',()=>{$('viztip').style.display='none';});
 $('viz').addEventListener('click',e=>{
  const r=$('viz').getBoundingClientRect();
  const o=vizOrbAt((e.clientX-r.left)*900/r.width,(e.clientY-r.top)*250/r.height);
  if(o==='brain')document.querySelector('nav button[data-t="chat"]').click();
  if(o==='computer')document.querySelector('nav button[data-t="terminal"]').click();});
+const vb={rot:0,zoom:1,paused:false,drag:null,moved:false};
+const vbctx=$('vizbig').getContext('2d');
+function projB(p,cx,cy,s){const c=Math.cos(vb.rot),sn=Math.sin(vb.rot);
+ const x=p[0]*c-p[2]*sn,z=p[0]*sn+p[2]*c,y=p[1];
+ const d=340/(340+z*40);return[cx+x*s*d*vb.zoom,cy+y*s*d*vb.zoom,d];}
+function drawBig(){
+ requestAnimationFrame(drawBig);
+ if(vb.paused||!$('activity').classList.contains('on'))return;
+ if(!vb.drag)vb.rot+=.0035;
+ vbctx.clearRect(0,0,900,420);
+ const draw=(pts,cx,cy,s,col)=>{for(const p of pts){const q=projB(p,cx,cy,s);
+  vbctx.globalAlpha=.25+.55*q[2]/1.6;vbctx.fillStyle=col;
+  vbctx.beginPath();vbctx.arc(q[0],q[1],1.8*q[2],0,7);vbctx.fill();}};
+ draw(brainPts,225,185,64,'#e8b93e');
+ draw(chipPts,665,185,15,'#57c7ff');
+ vbctx.globalAlpha=1;vbctx.fillStyle='#9aa7b5';vbctx.font='13px sans-serif';
+ vbctx.fillText('BRAIN — qwen 3.5 4b, the seat',140,405);
+ vbctx.fillText('COMPUTER — linux, fast core + Qwen brain',500,405);
+ const qn=Math.min(12,(viz.lastAct&&viz.lastAct.guest_queue)||0);
+ vbctx.fillStyle='#e8b93e';
+ for(let i=0;i<qn;i++)vbctx.fillRect(610+i*10,350,7,7);
+ for(const p of viz.pulses){
+  const a=projB(p.a,225,185,64),b=projB(p.b,665,185,15);
+  const x=a[0]+(b[0]-a[0])*p.t,
+        y=a[1]+(b[1]-a[1])*p.t-Math.sin(p.t*3.14)*52;
+  vbctx.globalAlpha=.9;vbctx.fillStyle=p.big?'#ffffff':(p.back?'#57c7ff':'#ffd479');
+  vbctx.beginPath();vbctx.arc(x,y,p.big?3.5:2.5,0,7);vbctx.fill();}
+ vbctx.globalAlpha=1;}
+drawBig();
+function vbPos(e){const r=$('vizbig').getBoundingClientRect();
+ return [(e.clientX-r.left)*900/r.width,(e.clientY-r.top)*420/r.height];}
+function vbOrb(x,y){const dx=x-225,dy=y-185;
+ if(dx*dx+dy*dy<100*100)return 'brain';
+ const ex=x-665,ey=y-185;
+ if(ex*ex+ey*ey<85*85)return 'computer';
+ return null;}
+$('vizbig').addEventListener('mousedown',e=>{vb.drag={x:e.clientX,rot:vb.rot};vb.moved=false;});
+$('vizbig').addEventListener('mouseup',()=>{vb.drag=null;});
+$('vizbig').addEventListener('mouseleave',()=>{vb.drag=null;$('viztip').style.display='none';});
+$('vizbig').addEventListener('mousemove',e=>{
+ if(vb.drag){const dx=e.clientX-vb.drag.x;
+  if(Math.abs(dx)>3)vb.moved=true;
+  vb.rot=vb.drag.rot+dx*.006;return;}
+ const xy=vbPos(e),o=vbOrb(xy[0],xy[1]);
+ if(!o){$('viztip').style.display='none';return;}
+ showTip(e,orbTip(o));});
+$('vizbig').addEventListener('wheel',e=>{e.preventDefault();
+ vb.zoom=Math.max(.6,Math.min(2.5,vb.zoom*(e.deltaY>0?.92:1.08)));},{passive:false});
+$('vizbig').addEventListener('click',e=>{
+ if(vb.moved)return;
+ const xy=vbPos(e),o=vbOrb(xy[0],xy[1]);
+ if(o==='brain')document.querySelector('nav button[data-t="chat"]').click();
+ if(o==='computer')document.querySelector('nav button[data-t="terminal"]').click();});
+$('vizpause').onclick=()=>{vb.paused=!vb.paused;
+ $('vizpause').textContent=vb.paused?'resume':'pause';};
+$('vizreset').onclick=()=>{vb.rot=0;vb.zoom=1;};
 let sysTickN=0,cpuHist=[];
 function gauge(cv,pct){
  const c=cv.getContext('2d');c.clearRect(0,0,180,120);
@@ -1395,6 +1470,10 @@ async function activity(){
    +'the computer orb are queued jobs. hover an orb for live numbers, '
    +'click one to open its tab. slow dots, on purpose - the computer '
    +'is slow.';
+  $('vizstats').textContent=(j.guest_hands||0)+' jobs handed over \u00b7 '
+   +(j.guest_dones||0)+' reports back \u00b7 '+(j.guest_queue||0)
+   +' queued \u00b7 chat '+(j.chat_open?'live':'idle')+' \u00b7 circuit '
+   +(j.grown.prompts||0)+' prompts';
  }catch(e){}
  setTimeout(activity,1000);}
 activity();
@@ -1443,6 +1522,7 @@ $('actupkeep').onclick=()=>mindAct('/api/upkeep',
  ()=>{loadMind();setTimeout(loadMind,30000);});
 const PAL=[
  ['Go: Overview','show the status dashboard',()=>document.querySelector('nav button[data-t="overview"]').click()],
+ ['Go: Activity','interactive 3D activity',()=>document.querySelector('nav button[data-t="activity"]').click()],
  ['Go: Chat','talk to the built-in weights',()=>document.querySelector('nav button[data-t="chat"]').click()],
  ['Go: Terminal','the live Qwen-Linux guest',()=>document.querySelector('nav button[data-t="terminal"]').click()],
  ['Go: Desktop','framebuffer spike placeholder',()=>document.querySelector('nav button[data-t="desktop"]').click()],

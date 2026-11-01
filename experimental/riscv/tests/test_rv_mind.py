@@ -233,11 +233,12 @@ def test_page_id_contract_and_tabs():
     assert len(ids) == len(set(ids)), "duplicate ids break getElementById"
     have = set(ids)
     assert need - have == set()
-    for tab in ("overview", "chat", "terminal", "desktop", "apps",
-                "system", "settings"):
+    for tab in ("overview", "activity", "chat", "terminal", "desktop",
+                "apps", "system", "settings"):
         assert 'data-t="%s"' % tab in DB.PAGE
         assert 'id="%s"' % tab in DB.PAGE
     for wid in ("gauge-cpu", "gauge-ram", "spark", "builtapps",
                 "skills", "jobs", "upstream", "viztip", "t-cpu", "t-ram",
-                "s-guest", "s-budget", "actsnap", "acttrace", "actupkeep"):
+                "s-guest", "s-budget", "actsnap", "acttrace", "actupkeep",
+                "vizbig", "vizpause", "vizreset", "vizstats", "entryapps"):
         assert 'id="%s"' % wid in DB.PAGE, wid
