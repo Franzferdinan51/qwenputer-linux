@@ -924,6 +924,14 @@ border:1px solid var(--line);border-radius:10px;cursor:grab}
 #viztip{position:fixed;display:none;background:var(--card);color:var(--tx);
 border:1px solid var(--acc);border-radius:8px;padding:6px 10px;font-size:12px;
 z-index:60;pointer-events:none;max-width:260px;box-shadow:var(--shadow)}
+#vizpop{position:fixed;display:none;background:var(--card);color:var(--tx);
+border:1px solid var(--acc);border-radius:10px;padding:12px 14px;font-size:13px;
+z-index:61;max-width:340px;box-shadow:var(--shadow)}
+#vizpop h4{margin:0 0 6px;font-size:13px;letter-spacing:.05em;color:var(--acc)}
+#vizpop .prow{display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-top:1px solid var(--line)}
+#vizpop .prow span{color:var(--dim);white-space:nowrap}
+#vizpop .prow b{font-weight:600;text-align:right}
+#vizpop .btnsm{margin-top:8px;margin-right:6px}
 .chip{background:var(--card);border:1px solid var(--line);color:var(--tx);
 border-radius:20px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
 .chip:hover{border-color:var(--acc)}
@@ -975,6 +983,7 @@ code{background:var(--code);padding:1px 6px;border-radius:5px}
 </div>
 <canvas id="viz" width="900" height="250"></canvas>
 <div id="viztip"></div>
+<div id="vizpop" style="display:none"></div>
 <p class="dim" id="vizlegend">warming up&hellip;</p>
 <p class="dim">left: the brain thinking (amber). right: the live
 computer &mdash; guest linux on the fast native core, borrowing
@@ -1012,7 +1021,7 @@ it can use the whole Linux side: files, the notebook at
 <button class="btnsm" id="vizpause">pause</button>
 <button class="btnsm" id="vizreset">reset view</button>
 <span class="sp"></span>
-<span class="dim">drag to spin &middot; scroll to zoom &middot; hover orbs for numbers &middot; click an orb to open its tab</span>
+<span class="dim">drag to spin &middot; scroll to zoom &middot; hover nodes for numbers &middot; click a node to inspect it</span>
 </div>
 <p class="dim">the same live pulses as Overview: amber hands a job
 brain&nbsp;&rarr;&nbsp;computer, blue reports back, white flashes for
@@ -1218,7 +1227,7 @@ async function loadMind(){
 loadMind();$('mindrefresh').onclick=loadMind;
 async function status(){
  try{const r=await fetch('/api/status');const j=await r.json();
-  j.grown=j.grown||{};j.stock=j.stock||{};j.seat=j.seat||{};
+  j.grown=j.grown||{};j.stock=j.stock||{};j.seat=j.seat||{};viz.lastSeat=j.seat;
   $('seatmodel').textContent=j.seat.model||'unreachable';
   $('seatsub').textContent=j.seat.error?j.seat.error:('via '+j.seat.backend);
   $('ov-model').textContent=j.seat.model||('unreachable: '+(j.seat.error||''));
@@ -1361,12 +1370,13 @@ function orbTip(o){
  if(o==='brain'){const m=($('seatmodel')||{}).textContent||'?';
   return 'BRAIN — '+(m||'?')+' · chat '+(viz.lastAct&&viz.lastAct.chat_open?'live now':'idle');}
  const a=viz.lastAct||{},g=(viz.lastSys&&viz.lastSys.guest)||{};
+ if(o==='queue')return 'QUEUE — '+(a.guest_queue||0)+' waiting'+((a.guest_hands||a.guest_dones)?(' · '+(a.guest_hands||0)+' run · '+(a.guest_dones||0)+' back'):'');
  return 'COMPUTER — '+(a.guest_active?('working'+(a.guest_task?': '+a.guest_task:'')):'idle')
   +(a.guest_queue?(' · '+a.guest_queue+' queued'):'')
   +(g.cpu_pct==null?'':(' · CPU '+g.cpu_pct+'%'))
   +(g.mem_total_kb?(' · RAM '+Math.round((g.mem_total_kb-(g.mem_avail_kb||0))/1024)+'/'+Math.round(g.mem_total_kb/1024)+'M'):'');}
-function showTip(e,t){const tip=$('viztip');
- tip.textContent=t+' (click to open)';
+function showTip(e,t,verb){const tip=$('viztip');
+ tip.textContent=t+' ('+(verb||'click to open')+')';
  tip.style.display='block';tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY+10)+'px';}
 $('viz').addEventListener('mousemove',e=>{
  const r=$('viz').getBoundingClientRect();
@@ -1410,7 +1420,9 @@ function drawBig(){
 drawBig();
 function vbPos(e){const r=$('vizbig').getBoundingClientRect();
  return [(e.clientX-r.left)*900/r.width,(e.clientY-r.top)*420/r.height];}
-function vbOrb(x,y){const dx=x-225,dy=y-185;
+function vbOrb(x,y){
+ if(x>598&&x<742&&y>338&&y<366)return 'queue';
+ const dx=x-225,dy=y-185;
  if(dx*dx+dy*dy<100*100)return 'brain';
  const ex=x-665,ey=y-185;
  if(ex*ex+ey*ey<85*85)return 'computer';
@@ -1424,14 +1436,61 @@ $('vizbig').addEventListener('mousemove',e=>{
   vb.rot=vb.drag.rot+dx*.006;return;}
  const xy=vbPos(e),o=vbOrb(xy[0],xy[1]);
  if(!o){$('viztip').style.display='none';return;}
- showTip(e,orbTip(o));});
+ showTip(e,orbTip(o),'click to inspect');});
 $('vizbig').addEventListener('wheel',e=>{e.preventDefault();
  vb.zoom=Math.max(.6,Math.min(2.5,vb.zoom*(e.deltaY>0?.92:1.08)));},{passive:false});
 $('vizbig').addEventListener('click',e=>{
  if(vb.moved)return;
  const xy=vbPos(e),o=vbOrb(xy[0],xy[1]);
- if(o==='brain')document.querySelector('nav button[data-t="chat"]').click();
- if(o==='computer')document.querySelector('nav button[data-t="terminal"]').click();});
+ if(!o){closeVizPop();return;}
+ openVizPop(o,e);});
+let vizpopFor=null;
+function vizpopHTML(o){
+ const a=viz.lastAct||{},g=(viz.lastSys&&viz.lastSys.guest)||{},
+  m=lastMind||{},seat=viz.lastSeat||{};
+ const row=(k,v)=>'<div class="prow"><span>'+k+'</span><b>'+v+'</b></div>';
+ if(o==='brain'){
+  const mem=m.present?((m.skills||[]).length+' skills · '+(m.apps||[]).length+' apps · '+(m.jobs||[]).length+' jobs · '+(m.episodes||0)+' tune episodes'):'no snapshot yet';
+  return '<h4>BRAIN — the qwen weights</h4>'
+  +row('model',escH(seat.model||($('seatmodel')||{}).textContent||'?'))
+  +row('seat',escH(seat.error?('error: '+seat.error):('via '+(seat.backend||'?'))))
+  +row('chat',escH(a.chat_open?'live now':'idle'))
+  +row('memory',escH(mem))
+  +row('in flight',viz.pulses.length+' pulses · '+(a.guest_queue||0)+' queued')
+  +'<p class="dim">the brain thinks, the computer runs. every amber dot is a job crossing over.</p>'
+  +'<button class="btnsm" data-go="chat">open chat</button><button class="btnsm" data-x="1">close</button>';
+ }
+ if(o==='queue'){
+  return '<h4>QUEUE — waiting jobs</h4>'
+  +row('queued',a.guest_queue||0)
+  +row('run so far',(a.guest_hands||0)+' handed · '+(a.guest_dones||0)+' reported')
+  +'<p class="dim">jobs wait here, first in first out, while the computer is busy.</p>'
+  +'<button class="btnsm" data-go="terminal">watch terminal</button><button class="btnsm" data-x="1">close</button>';
+ }
+ const cpu=g.cpu_pct==null?'…':(g.cpu_pct+'%');
+ const ram=g.mem_total_kb?(Math.round((g.mem_total_kb-(g.mem_avail_kb||0))/1024)+'/'+Math.round(g.mem_total_kb/1024)+'M'):'…';
+ const eng=g.steps==null?'older engine — live after its restart':(Number(g.steps).toLocaleString()+' steps'+(g.steps_per_s==null?'':(' · '+Number(g.steps_per_s).toLocaleString()+'/s')));
+ const state=!a.terminal_up?'down':(a.guest_active?('working'+(a.guest_task?(': '+a.guest_task):'')):'idle at its prompt');
+ return '<h4>COMPUTER — qwen-linux guest</h4>'
+ +row('state',escH(state))
+ +row('CPU',escH(cpu+(g.load1==null?'':(' · load '+g.load1))))
+ +row('RAM',escH(ram))
+ +row('engine',escH(eng))
+ +row('sample',escH(g.age_s==null?('no fresh sample — '+(g.last_try||'warming up')):(g.age_s+'s ago · '+(g.note||''))))
+ +'<p class="dim">the linux PC inside the weights. its own numbers, sampled live.</p>'
+ +'<button class="btnsm" data-go="terminal">open terminal</button><button class="btnsm" data-x="1">close</button>';
+}
+function openVizPop(o,e){
+ e=e||{clientX:400,clientY:200};vizpopFor=o;const p=$('vizpop');
+ p.innerHTML=vizpopHTML(o);
+ const w=window.innerWidth||1024;let x=e.clientX+14;if(x>w-370)x=e.clientX-360;
+ p.style.left=Math.max(8,x)+'px';p.style.top=(e.clientY+10)+'px';
+ p.style.display='block';
+}
+function closeVizPop(){vizpopFor=null;$('vizpop').style.display='none';}
+$('vizpop').onclick=e=>{const t=e.target||{},d=t.dataset||{};
+ if(d.x)closeVizPop();
+ else if(d.go)document.querySelector('nav button[data-t="'+d.go+'"]').click();};
 $('vizpause').onclick=()=>{vb.paused=!vb.paused;
  $('vizpause').textContent=vb.paused?'resume':'pause';};
 $('vizreset').onclick=()=>{vb.rot=0;vb.zoom=1;};
@@ -1526,6 +1585,7 @@ async function activity(){
    +(j.guest_dones||0)+' reports back \u00b7 '+(j.guest_queue||0)
    +' queued \u00b7 chat '+(j.chat_open?'live':'idle')+' \u00b7 circuit '
    +(j.grown.prompts||0)+' prompts';
+  if(vizpopFor)$('vizpop').innerHTML=vizpopHTML(vizpopFor);
  }catch(e){}
  setTimeout(activity,1000);}
 activity();
@@ -1613,6 +1673,7 @@ $('palin').onkeydown=e=>{
  else if(e.key==='Enter'&&palHits[palSel]){palClose();palHits[palSel][0][2]();}
 };
 document.addEventListener('keydown',e=>{
+ if(e.key==='Escape'&&vizpopFor)closeVizPop();
  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('pal').classList.contains('on')?palClose():palOpen();}
 });
 </script></body></html>
