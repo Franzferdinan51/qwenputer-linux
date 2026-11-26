@@ -1,0 +1,76 @@
+c[?7l[2J[0mSeaBIOS (version 1.16.3-debian-1.16.3-2)
+
+
+iPXE (https://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+7EFCAE00+7EF0AE00 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...                                                                               
+
+
+Booting from ROM..
+==============================================================================
+  Qwenputer-X86 v1.0 | asm-llm OS v2.0 | Bare-Metal Qwen3-0.6B, Pure x86-64 Asm
+==============================================================================
+  CPU   : QEMU TCG CPU version 2.5+ (AVX2+FMA, 1504 MHz)
+  SMP   : 4/4 x86-64 cores online (APIC INIT-SIPI-SIPI, lock-free)
+  RAM   : 2047 MiB | Arena: 449 MiB | Boot: 1781.83 ms
+  Model : Qwen3-0.6B Q8_0 (614 MiB @ 0x00327000, 28L, ctx=2048)
+==============================================================================
+Interactive Bare-Metal Chat (/clear, /think, /nothink, /bench, /halt, /help)
+Qwenputer-X86: /calc /put /get /del /list /info /qhelp
+
+qwenputer> /info
+[qwenputer] Qwenputer-X86 v1.0 | bare-metal Qwen3-0.6B + exact calc + RAM filesystem | files: 0/32 | commands: /calc /put /get /del /list /info /qhelp
+
+qwenputer> /calc 123456789*987654321
+[calc] 121932631112635269
+
+qwenputer> /calc 2+3*4
+[calc] 14
+
+qwenputer> /calc (2+3)*4
+[calc] 20
+
+qwenputer> /calc 100/7
+[calc] 14
+
+qwenputer> /calc 100%7
+[calc] 2
+
+qwenputer> /calc -5*3+1
+[calc] -14
+
+qwenputer> /calc 10/0
+[calc] error (bad expression or divide by zero)
+
+qwenputer> /calc 9223372036854775807+1
+[calc] -9223372036854775808
+
+qwenputer> /put hello.txt the quick brown fox
+[fs] stored 'hello.txt' (19 B)
+
+qwenputer> /get hello.txt
+the quick brown fox
+
+qwenputer> /put note remember the milk
+[fs] stored 'note' (17 B)
+
+qwenputer> /list
+  hello.txt  (19 B)
+  note  (17 B)
+
+qwenputer> /del hello.txt
+[fs] deleted 'hello.txt'
+
+qwenputer> /get hello.txt
+[fs] not found
+
+qwenputer> /qhelp
+Qwenputer commands:
+  /calc <expr>       exact 64-bit integer math (+ - * / %, parentheses)
+  /put <name> <text> store text in the RAM filesystem
+  /get <name>        print a stored file
+  /del <name>        delete a stored file
+  /list              list stored files
+  /info              Qwenputer-X86 status
+  (upstream chat: /clear /think /nothink /bench /halt /help)
+
+qwenputer>

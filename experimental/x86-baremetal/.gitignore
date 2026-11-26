@@ -1,0 +1,15 @@
+*.o
+*.bin
+*.asmbin
+*.gguf
+*.safetensors
+*.ckpt
+*.iso
+build/
+runs/
+models/
+data/
+checkpoints/
+.venv/
+__pycache__/
+*.log

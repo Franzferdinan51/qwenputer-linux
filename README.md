@@ -101,6 +101,32 @@ itself, so Linux runs inside the model the way C and MicroPython already do. Tha
 is specified in the design doc; until it lands, Linux here runs on the reference machine
 the circuit is verified against, not purely in the weights.
 
+## New: Qwenputer-X86 — the bare-metal x86 track (`experimental/x86-baremetal/`)
+
+The other direction, lined up with [alesha-pro/llm.asm](https://github.com/alesha-pro/llm.asm)
+(MIT, imported whole at `48feccb` and verified at its exact published build sizes):
+a **bootable bare-metal x86-64 OS** whose only program is Qwen3-0.6B — a 24 KB
+pure-assembly Multiboot kernel, no Linux, no libc, 74–94 ms boot, 134.9 tok/s on KVM.
+Upstream's machine could only talk; this track adds the Qwenputer computer layer
+**in the kernel, in assembly**:
+
+- **`/calc <expr>`** — exact signed 64-bit integer arithmetic (precedence, parentheses,
+  guarded divide-by-zero / `INT64_MIN / -1`). `/calc 123456789*987654321` →
+  `121932631112635269`, exactly, every time — the founding Qwenputer trick, on a real CPU.
+- **A RAM filesystem** — `/put /get /del /list` (32 files), mirroring the in-weights
+  filesystem model's tool surface so habits transfer between tracks.
+- **`/info`, `/qhelp`**, a `qwenputer>` prompt, and a host bridge
+  (`qwenputer/qp_agent.py`) with an agentshell-style scheduler and a
+  `CALC:/PUT:/GET:` agent loop — the model is the brain, the kernel is the hands.
+
+Kernel: **27,132 bytes** (upstream 24,252 + 2,880 for the computer layer). Verified
+2026-11-25: all 16 serial boot checks pass in QEMU (`boot-logs/qp-x86-serial-test.out`),
+and a batch chat prompt produces **token-identical output to the pristine upstream
+kernel** (same 25 prefill / 1 decode tokens, same text) — the computer layer changes
+nothing upstream proved. Full docs: [`experimental/x86-baremetal/qwenputer/README.md`](experimental/x86-baremetal/qwenputer/README.md),
+roadmap in `qwenputer/UPGRADES.md` (persistence, bigger models, framebuffer/Doom,
+in-kernel scheduler).
+
 ---
 
 **Qwenputer is a new kind of experimental model: Qwen3.5-4B with a 32-bit RISC-V CPU compiled and
