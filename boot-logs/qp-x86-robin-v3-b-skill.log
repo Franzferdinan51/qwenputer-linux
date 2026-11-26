@@ -1,0 +1,18 @@
+[qp] transcript: /out/sessions-v3/session-20261126-034951.log
+[qp] Qwenputer-X86 agent framework v2 up. Chat, /calc, /put, /get, /list, /info, /halt.
+[task] Load the exact-arithmetic skill and follow it. What is 777*888? Answer with SAY: and the result.
+[model] SKILL: exact-arithmetic
+step 0: SKILL: exact-arithmetic
+[tool] SKILL result: # Exact Arithmetic
+
+You are bad at mental arithmetic and the machine is perfect at it.
+
+- ANY multiplication, division, or multi-step sum goes through CALC:,
+  even when the answer looks obvious.
+- Never write a numeric result you did not get from a CALC: result.
+- If a task has several calculations
+[model] CALC: 777*888
+step 1: CALC: 777*888
+[tool] CALC result: [calc] 689976
+[model] SAY: 689976
+[answer] 689976

@@ -1,5 +1,34 @@
 # Qwenputer-X86 — upgrade log & roadmap
 
+## Shipped in v1.2 (2026-11-25, night) — agent framework v3
+
+Mined [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)
+(read-only) for the patterns that fit a small model in a bare-metal
+kernel, and folded them into `qp_agent.py`:
+
+1. **Frozen memory snapshot** (Hermes' core memory design: MEMORY.md
+   enters the system prompt as a snapshot at session start) — notes
+   ride in the instruction line as `name=value` pairs under a char
+   budget, degrading to names-only past it.
+2. **TODO tool** — the model keeps a plan list host-side
+   (`TODO: add/done/start/clear`), every op returns the full list with
+   Hermes' `[ ]`/`[>]`/`[x]` markers.
+3. **Skills** — `SKILL.md` files with Hermes frontmatter
+   (`name:`/`description:`); the catalog rides in the prompt, `SKILL:
+   <name>` loads the body on demand (progressive disclosure). Ships
+   with `exact-arithmetic` and `note-taking` skills.
+4. **Delegation** — `SUB: <subtask>` runs a nested agent task on the
+   same machine and returns its answer as the tool result (depth 1).
+5. **Session search** — `--search <term>` over transcripts.
+
+Verified on Robin + 1.7B (logs `boot-logs/qp-x86-robin-v3-*`):
+snapshot recall answered 97406784 from the prompt alone; skill test —
+SKILL loaded, then CALC 777*888 → SAY **689976**; delegation test —
+TODO added, SUB ran its own CALC (99*99) and the parent answered
+**9801**. One live bug found and fixed on the way: multi-line tool
+results (skill bodies) are flattened before going back into the
+single-line REPL.
+
 ## Shipped in v1.1 (2026-11-25, later)
 
 1. **Qwen3-1.7B** — the kernel reads its geometry from the `.asmbin`

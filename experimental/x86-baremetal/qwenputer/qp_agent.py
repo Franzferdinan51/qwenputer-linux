@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Qwenputer-X86 agent framework (v2) — the Hermes-style host bridge.
+"""Qwenputer-X86 agent framework (v3) — the Hermes-style host bridge.
+
+v3 mines NousResearch/hermes-agent for the patterns that fit a small
+model in a bare-metal kernel: the FROZEN MEMORY SNAPSHOT (notes enter
+the prompt at session start, Hermes' core memory design), the TODO
+tool (model-kept plan list with [ ]/[>]/[x] markers), SKILLS
+(SKILL.md files, catalog in the prompt, body loaded on demand —
+progressive disclosure), DELEGATION (SUB: runs a nested agent task and
+returns its answer), and SESSION SEARCH over transcripts.
 
 The bare-metal OS is the computer; this framework is the agent shell around
 it — the x86 sibling of the RISC-V track's liveterm.py / agentshell.sh,
@@ -43,10 +51,82 @@ import sys
 import time
 
 PROMPT = b"qwenputer>"
-TOOL_RE = re.compile(r"^(CALC|PUT|GET|DEL|LIST|INFO):?\s*(.*)$", re.MULTILINE)
+TOOL_RE = re.compile(
+    r"^(CALC|PUT|GET|DEL|LIST|INFO|TODO|SKILL|SUB):?\s*(.*)$", re.MULTILINE)
+KERNEL_TOOLS = {"CALC", "PUT", "GET", "DEL", "LIST", "INFO"}
 FS_NAME_MAX = 31
 FS_TEXT_MAX = 255
 FS_SLOTS = 32
+
+
+class TodoList:
+    """Hermes' todo tool, line-protocol edition: the model keeps a plan
+    list host-side; every op returns the full list with status markers."""
+
+    def __init__(self):
+        self.items: list[dict] = []
+
+    def render(self) -> str:
+        if not self.items:
+            return "(todo list is empty)"
+        marks = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
+        return " ".join(
+            f"{i + 1}.{marks[it['status']]} {it['text']}"
+            for i, it in enumerate(self.items))
+
+    def op(self, args: str) -> str:
+        parts = args.split(None, 1)
+        cmd = parts[0].lower() if parts else "list"
+        rest = parts[1] if len(parts) > 1 else ""
+        if cmd == "add" and rest:
+            self.items.append({"text": rest[:80], "status": "pending"})
+        elif cmd == "done" and rest.isdigit():
+            n = int(rest) - 1
+            if 0 <= n < len(self.items):
+                self.items[n]["status"] = "completed"
+        elif cmd == "start" and rest.isdigit():
+            n = int(rest) - 1
+            if 0 <= n < len(self.items):
+                self.items[n]["status"] = "in_progress"
+        elif cmd == "clear":
+            self.items.clear()
+        return self.render()
+
+
+class Skills:
+    """Hermes skills, shrunk to fit: SKILL.md files with YAML-ish
+    frontmatter (name:, description:). The catalog (names + one-line
+    descriptions) rides in the instructions; SKILL: <name> loads the
+    body as the next message — progressive disclosure, Hermes-style."""
+
+    def __init__(self, skills_dir: str):
+        self.skills: dict[str, tuple[str, str]] = {}
+        if skills_dir and os.path.isdir(skills_dir):
+            for fn in sorted(os.listdir(skills_dir)):
+                if not fn.endswith(".md"):
+                    continue
+                with open(os.path.join(skills_dir, fn)) as f:
+                    text = f.read()
+                name = fn[:-3]
+                desc = ""
+                m = re.search(r"^name:\s*(.+)$", text, re.MULTILINE)
+                if m:
+                    name = m.group(1).strip()
+                m = re.search(r"^description:\s*\"?(.+?)\"?$", text, re.MULTILINE)
+                if m:
+                    desc = m.group(1).strip()
+                body = re.sub(r"^---\n.*?^---\n", "", text,
+                              flags=re.DOTALL | re.MULTILINE).strip()
+                self.skills[name] = (desc, body)
+
+    def catalog(self) -> str:
+        return "; ".join(f"{n} ({d})" for n, (d, _) in self.skills.items())
+
+    def load(self, name: str) -> str:
+        name = name.strip().split()[0] if name.strip() else ""
+        if name in self.skills:
+            return self.skills[name][1][:600]
+        return f"no skill named {name}. Available: {', '.join(self.skills)}"
 
 
 def parse_tool_lines(text: str):
@@ -152,6 +232,20 @@ class Memory:
             text = text[: FS_TEXT_MAX - 4] + " ..."
         return name, text
 
+    def snapshot(self, budget: int = 420) -> str:
+        """Hermes' frozen memory snapshot: notes enter the prompt at
+        session start (name=value pairs, budget-bounded). Big memories
+        degrade to names-only; GET still fetches full text."""
+        parts, used = [], 0
+        for name, text in self.notes.items():
+            pair = f"{name}={text}"
+            if used + len(pair) > budget:
+                parts.append(f"{name}=(use GET)")
+                break
+            parts.append(pair)
+            used += len(pair) + 2
+        return "; ".join(parts)
+
     def sync_in(self, os_: QemuOS):
         for name, text in list(self.notes.items())[:FS_SLOTS]:
             n, t = self._fit(name, text)
@@ -252,22 +346,32 @@ class Scheduler:
 AGENT_INSTRUCTIONS = (
     "Agent mode. Tools - reply with exactly ONE line: "
     "CALC: <expr> (exact math) | PUT: <name> <text> (save note) | "
-    "GET: <name> (read note) | DEL: <name> | LIST: (note names) | "
-    "INFO: (status). The tool result returns as the next message. "
+    "GET: <name> (read note) | DEL: <name> | LIST: | INFO: | "
+    "TODO: add <text> / TODO: done <n> (plan list) | "
+    "SKILL: <name> (load guidance) | SUB: <subtask> (delegate). "
+    "The tool result returns as the next message. "
     "Do every part of the task in order, one tool per reply; never "
     "invent a tool result. Example: CALC: 123*456. Finish by replying: "
-    "SAY: <final answer>. Task: "
+    "SAY: <final answer>."
 )
 
 
 def agent_run(os_: QemuOS, task: str, max_steps: int = 8, log=print,
-              transcript: Transcript | None = None) -> str:
+              transcript: Transcript | None = None,
+              memory: Memory | None = None, skills: Skills | None = None,
+              todo: TodoList | None = None, depth: int = 0) -> str:
     def say(who, text):
         log(text if who == "[agent]" else f"{who} {text}")
         if transcript:
             transcript.write(who, text)
 
-    reply = os_.send(AGENT_INSTRUCTIONS + task)
+    intro = AGENT_INSTRUCTIONS
+    if depth == 0 and memory is not None and memory.notes:
+        intro += f" Memory: {memory.snapshot()}."
+    if depth == 0 and skills is not None and skills.skills:
+        intro += f" Skills: {skills.catalog()}."
+    intro += " Task: " + task
+    reply = os_.send(intro[:1000])
     say("[task]", task)
     for step in range(max_steps):
         say("[model]", reply[:600])
@@ -280,11 +384,27 @@ def agent_run(os_: QemuOS, task: str, max_steps: int = 8, log=print,
         say_at = reply.find("SAY:")
         if first_tool and (say_at == -1 or first_tool.start() < say_at):
             tool, args = first_tool.group(1), first_tool.group(2).strip()
-            line = tool_to_kernel_line(tool, args)
-            say("[agent]", f"step {step}: {line}")
-            result = os_.send(line)
+            say("[agent]", f"step {step}: {tool}: {args}")
+            if tool in KERNEL_TOOLS:
+                result = os_.send(tool_to_kernel_line(tool, args))
+            elif tool == "TODO":
+                result = (todo or TodoList()).op(args)
+            elif tool == "SKILL":
+                result = skills.load(args) if skills else "no skills loaded"
+            elif tool == "SUB":
+                if depth >= 1:
+                    result = "error: already in a subtask, no deeper SUB"
+                else:
+                    result = agent_run(
+                        os_, args, max_steps=4, log=log,
+                        transcript=transcript, depth=depth + 1)
+            else:  # pragma: no cover
+                result = f"unknown tool {tool}"
             say("[tool]", f"{tool} result: {result[:300]}")
-            reply = os_.send(f"{tool} result: {result}. "
+            # Tool results can be multi-line (SKILL bodies); the REPL
+            # takes ONE line, so the follow-up flattens whitespace.
+            flat = " ".join(result.split())[:400]
+            reply = os_.send(f"{tool} result: {flat}. "
                              "Continue the task in order: next tool line, "
                              "or SAY: <final answer> only when every part "
                              "of the task is done.")
@@ -306,7 +426,22 @@ def main() -> int:
     ap.add_argument("--sessions", default="")
     ap.add_argument("--agent", default="", help="run one agent task and exit")
     ap.add_argument("--max-steps", type=int, default=8)
+    ap.add_argument("--skills", default="", help="directory of SKILL.md files")
+    ap.add_argument("--search", default="",
+                    help="search session transcripts for a term and exit")
     args = ap.parse_args()
+
+    if args.search:
+        hits = 0
+        if args.sessions and os.path.isdir(args.sessions):
+            for fn in sorted(os.listdir(args.sessions)):
+                with open(os.path.join(args.sessions, fn)) as f:
+                    for line in f:
+                        if args.search.lower() in line.lower():
+                            print(f"{fn}: {line.rstrip()[:160]}")
+                            hits += 1
+        print(f"[search] {hits} hit(s) for {args.search!r}")
+        return 0
 
     transcript = Transcript(args.sessions)
     os_ = QemuOS(args.kernel, args.model, smp=args.smp, mem=args.mem)
@@ -315,10 +450,13 @@ def main() -> int:
     transcript.write("[boot]", os_.boot_text[:500])
     memory = Memory(args.memory)
     memory.sync_in(os_)
+    skills = Skills(args.skills)
+    todo = TodoList()
 
     def run_task(task: str) -> str:
         return agent_run(os_, task, max_steps=args.max_steps,
-                         transcript=transcript)
+                         transcript=transcript, memory=memory,
+                         skills=skills, todo=todo)
 
     try:
         if args.agent:

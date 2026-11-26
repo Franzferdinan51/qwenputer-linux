@@ -99,3 +99,11 @@ handles sharded safetensors now. `qp_agent.py` is a full agent framework:
 six tools, scheduler (raw + agent jobs, one-shot/repeating), session
 transcripts, and persistent memory synced through the kernel FS —
 verified end-to-end on Robin under KVM (see `UPGRADES.md`).
+
+## v1.2: agent framework v3 (mined from Hermes)
+
+`qp_agent.py` v3 adds the Hermes patterns that fit: frozen memory
+snapshot in the prompt, a TODO plan tool, SKILL.md skills (catalog in
+prompt, body on demand — two starter skills in `qwenputer/skills/`),
+SUB delegation to a nested agent task, and transcript search. All
+verified live on Robin with the 1.7B; see `UPGRADES.md`.
