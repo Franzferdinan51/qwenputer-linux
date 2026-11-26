@@ -162,6 +162,12 @@ tok_build_chat_prompt:
     mov     rdi, r12
     call    str_len                     ; rax = prompt byte length
 
+    ; Multi-arch: LFM3 models use their own chat format (BOS + im_start,
+    ; role words BPE-encoded as text segments, no think block)
+    lea     rdx, [rel g_ctx]
+    cmp     dword [rdx + CTX_ARCH], 1
+    je      .lfm3_chat
+
     test    r15, r15
     jz      .chat_mode
 
@@ -214,6 +220,85 @@ tok_build_chat_prompt:
     pop     rbx
     ret
 
+; LFM3 chat prompt: [BOS] [im_start] BPE("user\n") BPE(prompt)
+;                   [im_end] BPE("\n") [im_start] BPE("assistant\n")
+; Raw mode still encodes the prompt directly. Registers on entry:
+; r12 = prompt, r13 = out_toks, r14 = max_toks, r15 = raw_mode,
+; rax = prompt byte length.
+.lfm3_chat:
+    test    r15, r15
+    jz      .lfm3_build
+    mov     rdi, r12
+    mov     rsi, rax
+    mov     rdx, r13
+    mov     rcx, r14
+    call    tok_encode_bpe
+    jmp     .done
+.lfm3_build:
+    mov     r15, rbx                    ; r15 = think_mode (raw_mode consumed)
+    lea     rdx, [rel g_ctx]
+    mov     ecx, [rdx + CTX_BOS]
+    mov     [r13 + 0], ecx
+    mov     ecx, [rdx + CTX_IM_START]
+    mov     [r13 + 4], ecx
+    mov     rbx, 2                      ; count = 2
+    ; BPE("user\n")
+    lea     rdi, [rel lfm3_str_user]
+    mov     rsi, 5
+    lea     rdx, [r13 + rbx*4]
+    mov     rcx, r14
+    sub     rcx, rbx
+    call    tok_encode_bpe
+    add     rbx, rax
+    ; BPE(prompt)
+    mov     rdi, r12
+    call    str_len
+    mov     rsi, rax
+    mov     rdi, r12
+    lea     rdx, [r13 + rbx*4]
+    mov     rcx, r14
+    sub     rcx, rbx
+    call    tok_encode_bpe
+    add     rbx, rax
+    ; [im_end]
+    lea     rdx, [rel g_ctx]
+    mov     ecx, [rdx + CTX_EOS_1]
+    mov     [r13 + rbx*4], ecx
+    inc     rbx
+    ; BPE("\n")
+    lea     rdi, [rel lfm3_str_nl]
+    mov     rsi, 1
+    lea     rdx, [r13 + rbx*4]
+    mov     rcx, r14
+    sub     rcx, rbx
+    call    tok_encode_bpe
+    add     rbx, rax
+    ; [im_start]
+    lea     rdx, [rel g_ctx]
+    mov     ecx, [rdx + CTX_IM_START]
+    mov     [r13 + rbx*4], ecx
+    inc     rbx
+    ; BPE("assistant\n")
+    lea     rdi, [rel lfm3_str_asst]
+    mov     rsi, 10
+    lea     rdx, [r13 + rbx*4]
+    mov     rcx, r14
+    sub     rcx, rbx
+    call    tok_encode_bpe
+    add     rbx, rax
+    ; Think control, mirroring the model's chat template: the prompt
+    ; itself opens the think block (124901); with thinking off it is
+    ; immediately closed (124902) so generation starts after it.
+    mov     dword [r13 + rbx*4], 124901     ; <think>
+    inc     rbx
+    test    r15, r15                        ; think_mode
+    jnz     .lfm3_think_on
+    mov     dword [r13 + rbx*4], 124902     ; </think>
+    inc     rbx
+.lfm3_think_on:
+    mov     rax, rbx
+    jmp     .done
+
 ; ----------------------------------------------------------------------------
 ; void tok_write_stdout(uint32 token_id)
 ; rdi = token_id -> writes raw UTF-8 token bytes directly to stdout (fd=1).
@@ -234,3 +319,8 @@ tok_write_stdout:
     jmp     sys_write_all               ; tail call!
 .ret:
     ret
+
+section .rodata
+lfm3_str_user: db "user", 10
+lfm3_str_nl:   db 10
+lfm3_str_asst: db "assistant", 10

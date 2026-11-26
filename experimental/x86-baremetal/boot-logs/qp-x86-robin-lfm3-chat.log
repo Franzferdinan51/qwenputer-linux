@@ -1,0 +1,24 @@
+c[?7l[2J[0mSeaBIOS (version 1.16.2-debian-1.16.2-1)
+
+
+iPXE (http://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+BEFCEFD0+BEF0EFD0 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...
+                                                                               
+
+
+Booting from ROM..
+==============================================================================
+  Qwenputer-X86 v1.0 | asm-llm OS v2.0 | Bare-Metal Qwen3-0.6B, Pure x86-64 Asm
+==============================================================================
+  CPU   : AMD Ryzen 9 4900H with Radeon Graphics (AVX2+FMA, 3326 MHz)
+  SMP   : 8/8 x86-64 cores online (APIC INIT-SIPI-SIPI, lock-free)
+  RAM   : 4095 MiB | Arena: 195 MiB | Boot: 689.76 ms
+  Model : Qwen3-0.6B Q8_0 (1762 MiB @ 0x00328000, 28L, ctx=2048)
+==============================================================================
+Prompt: What is 2+2? Answer with just the number.
+PROMPT_TOKENS:124894,124899,5922,207,2992,355,229,26,19,26,39,41774,415,1303,278,1579,22,124900,207,124899,63514,207
+<think>The user asks: "What is 2+2? Answer with just the number." So we just need to output "4". The instruction: "Answer with just the number." So we should output only the number, no extra text. So final answer: 4.</think>4
+GEN_TOKENS:124901,597,4695,20589,34,496,2992,355,229,26,19,26,39,41774,415,1303,278,1579,2426,1672,522,1303,1094,310,6159,496,28,2784,440,10996,34,496,39630,415,1303,278,1579,2426,1672,522,1252,6159,1049,278,1579,20,794,4666,2803,22,1672,2023,5141,34,229,28,22,124902,28
+[asm-llm-os] prefill: 22 tok in 1032.69 ms (21.30 tok/s)
+[asm-llm-os] decode : 59 tok in 3127.51 ms (18.55 tok/s, cores=8) ctx=81/2048
+[asm-llm-os] boot   : ready 689.76 ms | boot->1st-tok 1742.27 ms

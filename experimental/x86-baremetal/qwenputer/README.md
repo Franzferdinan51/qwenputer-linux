@@ -107,3 +107,12 @@ snapshot in the prompt, a TODO plan tool, SKILL.md skills (catalog in
 prompt, body on demand — two starter skills in `qwenputer/skills/`),
 SUB delegation to a nested agent task, and transcript search. All
 verified live on Robin with the 1.7B; see `UPGRADES.md`.
+
+## v1.3 — LFM3-1.7B (second architecture)
+
+The same kernel now also runs LiquidAI's LFM3-1.7B (hybrid conv/attention)
+via `.asmbin` v3 + a dedicated asm forward pass. Raw greedy output is
+token-identical to the official weights (32/32, both test prompts) on
+Robin under KVM at 18.5 tok/s decode. Exporter: `scripts/export_lfm3.py`.
+Details and honest limits (agent driving is weaker than Qwen3-1.7B):
+UPGRADES.md, "Shipped in v1.3".

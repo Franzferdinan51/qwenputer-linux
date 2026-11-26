@@ -1,5 +1,45 @@
 # Qwenputer-X86 — upgrade log & roadmap
 
+## Shipped in v1.3 (2026-11-25, late) — second architecture: LFM3-1.7B
+
+The kernel is now multi-arch. `.asmbin` v3 + `FLAG_LFM3` routes
+`transformer_forward` to a new forward pass (`shared/transformer_lfm3.asm`)
+for LiquidAI's LFM3-1.7B — a hybrid model nothing like Qwen3: 24 layers =
+13 short-conv + 6 full-attention + 5 sliding-attention (window 256),
+sandwich RMSNorms, a per-head sigmoid attention gate, partial zero-tail
+RoPE on full layers (theta 1e6, factor 0.5) and full RoPE theta 1e4 on
+sliding layers. The Qwen3 path is untouched (regression below).
+
+- **Exporter** `scripts/export_lfm3.py`: arch table in the v3 header
+  (layer types, sliding theta, im_start/bos ids, per-layer offsets —
+  conv and attention layers have different sizes, so the stride is
+  non-uniform), per-type slot layout, final norm = `embedding_norm`.
+  Output 1,847,710,400 B, needs `-m 4G`.
+- **Kernel**: conv block (in_proj → B/C/x split, gated depthwise causal
+  conv, kernel 7, rolling per-layer state reset at pos 0), sliding
+  window via score-range start, sigmoid gate before o_proj, sandwich
+  post-norms in place. Chat builder is arch-aware: BOS + im_start with
+  BPE-encoded role segments, and the template's own think control —
+  the prompt opens `<think>` and closes it immediately when thinking
+  is off (tokens 124901/124902).
+- **Parity (Robin, KVM, smp 8)**: raw greedy completion is
+  **token-identical 32/32 on both reference prompts** vs the official
+  weights. Reference method matters: transformers `generate()` with
+  its DynamicCache degenerates after token 1 on this hybrid model
+  (prefill top-1 matched ours: 4741 " Paris"); the trustworthy target
+  is greedy-by-full-recompute, which matches our kernel exactly.
+  Decode 18.5 tok/s, prefill 14.6 tok/s (scalar attention; the Qwen
+  path's parallel attention is the obvious next speed step).
+- **Also verified on LFM3**: serial REPL 16/16, chat mode (answers 4,
+  template tokens exact). Agent framework: tools fire and the kernel
+  answers exactly (CALC → 97406784), but LFM3-1.7B is a weaker
+  instruction-follower than Qwen3-1.7B in this harness — it rambles
+  and didn't complete the save/read-back task. Model limit, not a
+  port bug; Qwen3-1.7B remains the agent driver.
+- **Qwen regression**: 0.6B serial checks 16/16 on the new kernel;
+  Qwen chat parity was already re-verified in the Linux build
+  ("Paris. The capital").
+
 ## Shipped in v1.2 (2026-11-25, night) — agent framework v3
 
 Mined [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)

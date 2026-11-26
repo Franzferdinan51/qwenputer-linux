@@ -42,9 +42,25 @@
 %define ASMBIN_MAGIC        0x4C4D5341  ; "ASML"
 %define ASMBIN_VERSION      1
 %define ASMBIN_VERSION_V2   2
+%define ASMBIN_VERSION_V3   3           ; v3 = multi-arch (LFM3)
 %define HDR_FLAG_TIED_EMB   1
 %define HDR_FLAG_QK_NORM    2
 %define HDR_FLAG_FP16_SCALES 4
+%define HDR_FLAG_LFM3       8
+
+; v3 header extensions (the v1/v2 reserved area)
+%define HDR_OFF_ARCH        112         ; Qword: offset of arch table
+%define HDR_SLIDING_WIN     120         ; u32: sliding attention window
+%define HDR_CONV_KERNEL     124         ; u32: conv kernel size
+
+; Arch table layout (pointed to by HDR_OFF_ARCH)
+%define ARCH_OFF_TYPES      0           ; u8 layer_types[n_layers]: 0 conv, 1 full, 2 sliding
+%define ARCH_OFF_THETA2     24          ; f32: rope theta for sliding layers
+%define ARCH_OFF_IM_START   28          ; u32
+%define ARCH_OFF_BOS        32          ; u32
+%define ARCH_OFF_LAYERS     40          ; u64 layer_offsets[n_layers]
+
+%define LFM3_TOK_NL         207         ; "\n" token in the LFM3 vocab
 
 %define HDR_MAGIC           0
 %define HDR_VERSION         4
@@ -154,4 +170,20 @@
 %define CTX_BUF_PROBS       360
 %define CTX_FP16_SCALES     368         ; uint32: 0 = v1 fp32 scales, 1 = v2 fp16 scales
 %define CTX_SCALE_SHIFT     372         ; uint32: 3 = fp32 (K>>3), 4 = fp16 (K>>4)
-%define CTX_SIZE            384
+
+; Multi-arch (LFM3) extension — zero/unused for Qwen3 models
+%define CTX_ARCH            376         ; uint32: 0 = Qwen3, 1 = LFM3
+%define CTX_ARCH_PTR        384         ; ptr to arch table in mmap
+%define CTX_THETA2          392         ; float32: sliding-layer rope theta
+%define CTX_SLIDING_WIN     396         ; uint32
+%define CTX_CONV_KERNEL     400         ; uint32
+%define CTX_IM_START        404         ; uint32
+%define CTX_BOS             408         ; uint32
+%define CTX_BUF_BCX         416         ; 3*dim floats (conv B/C/x)
+%define CTX_BUF_H           424         ; dim floats (conv scratch)
+%define CTX_BUF_CONV_STATE  432         ; n_layers * conv_k * dim floats
+%define CTX_BUF_GATE16      440         ; n_heads floats (attn sigmoid gate)
+%define CTX_BUF_INV_FREQ2   448
+%define CTX_BUF_COS2        456
+%define CTX_BUF_SIN2        464
+%define CTX_SIZE            480

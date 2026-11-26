@@ -31,7 +31,8 @@ P1_SHARED_OBJS := \
 	$(BUILD)/matmul.o \
 	$(BUILD)/threads.o \
 	$(BUILD)/tokenizer.o \
-	$(BUILD)/transformer.o
+	$(BUILD)/transformer.o \
+	$(BUILD)/transformer_lfm3.o
 
 P1_OBJS := $(P1_SHARED_OBJS) $(BUILD)/main.o
 
@@ -60,7 +61,8 @@ OS_OBJS := \
 	$(OS_BUILD)/math.o \
 	$(OS_BUILD)/matmul.o \
 	$(OS_BUILD)/tokenizer.o \
-	$(OS_BUILD)/transformer.o
+	$(OS_BUILD)/transformer.o \
+	$(OS_BUILD)/transformer_lfm3.o
 
 # --- Phase 3: Pure x86-64 Mini-GPT Training & Inference Engine (32 KB ELF) ---
 P3_DIR       := 03-minigpt-train
@@ -130,6 +132,9 @@ $(OS_BUILD)/tokenizer.o: $(SHARED_DIR)/tokenizer.asm $(SHARED_DIR)/constants.inc
 	$(NASM) $(OS_AFLAGS) $< -o $@
 
 $(OS_BUILD)/transformer.o: $(SHARED_DIR)/transformer.asm $(SHARED_DIR)/constants.inc $(FAST_Q8_STAMP) | $(OS_BUILD)
+	$(NASM) $(OS_AFLAGS) $< -o $@
+
+$(OS_BUILD)/transformer_lfm3.o: $(SHARED_DIR)/transformer_lfm3.asm $(SHARED_DIR)/constants.inc $(FAST_Q8_STAMP) | $(OS_BUILD)
 	$(NASM) $(OS_AFLAGS) $< -o $@
 
 $(OS_ELF64): $(OS_OBJS) $(P2_DIR)/linker.ld

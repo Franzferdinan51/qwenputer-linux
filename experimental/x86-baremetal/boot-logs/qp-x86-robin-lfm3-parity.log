@@ -1,0 +1,32 @@
+c[?7l[2J[0mSeaBIOS (version 1.16.2-debian-1.16.2-1)
+
+
+iPXE (http://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+BEFCEFD0+BEF0EFD0 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...
+                                                                               
+
+
+Booting from ROM..
+==============================================================================
+  Qwenputer-X86 v1.0 | asm-llm OS v2.0 | Bare-Metal Qwen3-0.6B, Pure x86-64 Asm
+==============================================================================
+  CPU   : AMD Ryzen 9 4900H with Radeon Graphics (AVX2+FMA, 3328 MHz)
+  SMP   : 8/8 x86-64 cores online (APIC INIT-SIPI-SIPI, lock-free)
+  RAM   : 4095 MiB | Arena: 195 MiB | Boot: 236.72 ms
+  Model : Qwen3-0.6B Q8_0 (1762 MiB @ 0x00328000, 28L, ctx=2048)
+==============================================================================
+Prompt: The capital of France is
+PROMPT_TOKENS:597,5205,302,3980,355
+ Paris.
+
+The capital of Japan is Tokyo.
+
+The capital of Australia is Canberra.
+
+The capital of Canada is Ottawa.
+
+The capital of the United States is Washington
+GEN_TOKENS:4741,63908,597,5205,302,3888,355,18943,63908,597,5205,302,5881,355,2076,59405,63908,597,5205,302,5177,355,36038,63908,597,5205,302,278,2203,2507,355,5644
+[asm-llm-os] prefill: 5 tok in 342.22 ms (14.61 tok/s)
+[asm-llm-os] decode : 32 tok in 1672.70 ms (18.53 tok/s, cores=8) ctx=36/2048
+[asm-llm-os] boot   : ready 236.72 ms | boot->1st-tok 626.98 ms

@@ -44,6 +44,7 @@ extern tp_matmul_q8_0
 %if FAST_Q8
 extern tp_gqa_attn
 %endif
+extern transformer_forward_lfm3
 
 section .text
 
@@ -118,6 +119,8 @@ model_init:
     cmp     eax, ASMBIN_VERSION
     je      .ver_ok
     cmp     eax, ASMBIN_VERSION_V2
+    je      .ver_ok
+    cmp     eax, ASMBIN_VERSION_V3
     jne     .err_bad_hdr
 .ver_ok:
     xor     ecx, ecx
@@ -182,6 +185,28 @@ model_init:
     mov     [rbx + CTX_RMS_EPS], eax
     mov     eax, [r15 + HDR_ROPE_THETA]
     mov     [rbx + CTX_ROPE_THETA], eax
+
+    ; Multi-arch: v3 + FLAG_LFM3 -> fill the LFM3 ctx extension
+    mov     dword [rbx + CTX_ARCH], 0
+    test    dword [r15 + HDR_FLAGS], HDR_FLAG_LFM3
+    jz      .arch_done
+    cmp     dword [r15 + HDR_VERSION], ASMBIN_VERSION_V3
+    jne     .arch_done
+    mov     dword [rbx + CTX_ARCH], 1
+    mov     rax, [r15 + HDR_OFF_ARCH]
+    add     rax, r15
+    mov     [rbx + CTX_ARCH_PTR], rax
+    mov     ecx, [rax + ARCH_OFF_THETA2]
+    mov     [rbx + CTX_THETA2], ecx
+    mov     ecx, [rax + ARCH_OFF_IM_START]
+    mov     [rbx + CTX_IM_START], ecx
+    mov     ecx, [rax + ARCH_OFF_BOS]
+    mov     [rbx + CTX_BOS], ecx
+    mov     eax, [r15 + HDR_SLIDING_WIN]
+    mov     [rbx + CTX_SLIDING_WIN], eax
+    mov     eax, [r15 + HDR_CONV_KERNEL]
+    mov     [rbx + CTX_CONV_KERNEL], eax
+.arch_done:
 
     ; Resolve pointers into mmap'd .asmbin
     mov     rax, [r15 + HDR_OFF_TOKENIZER]
@@ -284,6 +309,33 @@ model_init:
     ALLOC_BUF CTX_BUF_K_CACHE, rax
     ALLOC_BUF CTX_BUF_V_CACHE, rax
 
+    ; LFM3-only buffers (skipped entirely for Qwen3 models)
+    cmp     dword [rbx + CTX_ARCH], 1
+    jne     .arena_size
+    mov     rax, [rbx + CTX_DIM]
+    lea     rax, [rax + rax*2]
+    shl     rax, 2                      ; 3 * dim * 4
+    ALLOC_BUF CTX_BUF_BCX, rax
+    mov     rax, [rbx + CTX_DIM]
+    shl     rax, 2
+    ALLOC_BUF CTX_BUF_H, rax
+    mov     rax, [rbx + CTX_N_LAYERS]
+    mov     ecx, [rbx + CTX_CONV_KERNEL]    ; u32 field: load 32-bit!
+    imul    rax, rcx
+    imul    rax, [rbx + CTX_DIM]
+    shl     rax, 2
+    ALLOC_BUF CTX_BUF_CONV_STATE, rax
+    mov     rax, [rbx + CTX_N_HEADS]
+    shl     rax, 2
+    ALLOC_BUF CTX_BUF_GATE16, rax
+    mov     rax, [rbx + CTX_HEAD_DIM]
+    shl     rax, 2
+    ALLOC_BUF CTX_BUF_INV_FREQ2, rax
+    shr     rax, 1
+    ALLOC_BUF CTX_BUF_COS2, rax
+    ALLOC_BUF CTX_BUF_SIN2, rax
+.arena_size:
+
     ALIGN64 rbp
     mov     [rbx + CTX_ARENA_SIZE], rbp
 
@@ -303,11 +355,47 @@ model_init:
     dec     edx
     jnz     .reloc_lp
 
+    ; Relocate the 7 LFM3 buffer offsets too (LFM3 models only)
+    cmp     dword [rbx + CTX_ARCH], 1
+    jne     .rope_init
+    lea     rcx, [rbx + CTX_BUF_BCX]
+    mov     edx, 7
+.reloc_lfm_lp:
+    add     [rcx], rax
+    add     rcx, 8
+    dec     edx
+    jnz     .reloc_lfm_lp
+.rope_init:
+
     ; Precompute exact FP64 RoPE inverse frequencies
     mov     rdi, [rbx + CTX_BUF_INV_FREQ]
     mov     rsi, [rbx + CTX_HEAD_DIM]
     vmovss  xmm0, [rbx + CTX_ROPE_THETA]
     call    init_rope_freqs
+
+    ; LFM3: full-attention RoPE is partial (factor 0.5, zero-tail):
+    ; zero inv_freq entries from head_dim/4 to head_dim/2 - 1 (fp64),
+    ; and build the sliding layers' table from theta2.
+    cmp     dword [rbx + CTX_ARCH], 1
+    jne     .init_done
+    mov     rdi, [rbx + CTX_BUF_INV_FREQ]
+    mov     rcx, [rbx + CTX_HEAD_DIM]
+    shr     rcx, 2                      ; first zeroed pair index
+    mov     rdx, [rbx + CTX_HEAD_DIM]
+    shr     rdx, 1                      ; total pairs
+    vxorps  ymm0, ymm0, ymm0
+.zero_tail_lp:
+    cmp     rcx, rdx
+    jae     .zero_tail_done
+    vmovups [rdi + rcx*8], ymm0         ; 4 fp64 zeros per store
+    add     rcx, 4
+    jmp     .zero_tail_lp
+.zero_tail_done:
+    mov     rdi, [rbx + CTX_BUF_INV_FREQ2]
+    mov     rsi, [rbx + CTX_HEAD_DIM]
+    vmovss  xmm0, [rbx + CTX_THETA2]
+    call    init_rope_freqs
+.init_done:
 
     xor     eax, eax                    ; success!
     jmp     .ret
@@ -371,6 +459,10 @@ model_free:
 ; rdi = token_id, rsi = pos, rdx = compute_logits (0 during non-final prefill)
 ; ----------------------------------------------------------------------------
 transformer_forward:
+    ; Multi-arch dispatch: LFM3 models run their own forward pass.
+    lea     rax, [rel g_ctx]
+    cmp     dword [rax + CTX_ARCH], 1
+    je      transformer_forward_lfm3
     push    rbx
     push    rbp
     push    r12

@@ -593,18 +593,27 @@ run_inference:
     inc     r13
 
 .close_eot:
-    ; Feed <|im_end|> (151645) and \n (198) so next turn's <|im_start|>user\n aligns exact
+    ; Feed <|im_end|> and \n so next turn's <|im_start|>user\n aligns exact
+    ; (LFM3: im_end comes from the header, \n is token 207 in its vocab)
     cmp     dword [rel opt_raw], 0
     jne     .save_chat_pos
     lea     rax, [r13 + 2]
     cmp     rax, [rbp + CTX_MAX_SEQ]
     jae     .save_chat_pos
     mov     edi, TOK_IM_END
+    cmp     dword [rbp + CTX_ARCH], 1
+    jne     .eot_feed
+    mov     edi, [rbp + CTX_EOS_1]
+.eot_feed:
     mov     rsi, r13
     xor     edx, edx
     call    transformer_forward
     inc     r13
     mov     edi, TOK_NL
+    cmp     dword [rbp + CTX_ARCH], 1
+    jne     .nl_feed
+    mov     edi, LFM3_TOK_NL
+.nl_feed:
     mov     rsi, r13
     xor     edx, edx
     call    transformer_forward
