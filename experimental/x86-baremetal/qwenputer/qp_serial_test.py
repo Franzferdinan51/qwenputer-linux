@@ -51,6 +51,7 @@ def main() -> int:
     ap.add_argument("--kernel", default="build/asm-llm-os.elf")
     ap.add_argument("--model", required=True)
     ap.add_argument("--smp", type=int, default=4)
+    ap.add_argument("--mem", default="2G")
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--log", default="")
     args = ap.parse_args()
@@ -66,7 +67,7 @@ def main() -> int:
         "qemu-system-x86_64",
         "-machine", f"accel={accel}",
         "-cpu", cpu,
-        "-m", "2G",
+        "-m", args.mem,
         "-smp", str(args.smp),
         "-kernel", args.kernel,
         "-initrd", args.model,

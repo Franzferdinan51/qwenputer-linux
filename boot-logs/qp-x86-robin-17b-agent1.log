@@ -1,0 +1,15 @@
+[qp] transcript: /out/sessions17/session-20261126-030840.log
+[qp] Qwenputer-X86 agent framework v2 up. Chat, /calc, /put, /get, /list, /info, /halt.
+[task] Compute 123456 times 789 exactly. Then save the result as a note named product. Then read the note back to confirm it. Then answer with SAY: and the number.
+[model] CALC: 123456*789
+step 0: /calc 123456*789
+[tool] CALC result: [calc] 97406784
+[model] PUT: product 97406784
+step 1: /put product 97406784
+[tool] PUT result: [fs] stored 'product' (8 B)
+[model] GET: product
+step 2: /get product
+[tool] GET result: 97406784
+[model] SAY: 97406784
+[answer] 97406784
+[memory] saved 1 note(s) from the kernel FS

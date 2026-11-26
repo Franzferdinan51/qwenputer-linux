@@ -90,3 +90,12 @@ layer compiled in. The exported model file is byte-identical on all
 three hosts. Full table, logs and host runners (`run_mac_test.sh`,
 `run_robin_test.sh`, `Dockerfile.qptest`): see `UPGRADES.md` →
 "Verified hosts".
+
+## v1.1: Qwen3-1.7B + agent framework v2
+
+The same kernel also runs **Qwen3-1.7B** (geometry comes from the model
+header; bind the 1.7B `.asmbin` and give QEMU `-m 4G`). The exporter
+handles sharded safetensors now. `qp_agent.py` is a full agent framework:
+six tools, scheduler (raw + agent jobs, one-shot/repeating), session
+transcripts, and persistent memory synced through the kernel FS —
+verified end-to-end on Robin under KVM (see `UPGRADES.md`).

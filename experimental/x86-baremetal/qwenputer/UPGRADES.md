@@ -1,5 +1,34 @@
 # Qwenputer-X86 — upgrade log & roadmap
 
+## Shipped in v1.1 (2026-11-25, later)
+
+1. **Qwen3-1.7B** — the kernel reads its geometry from the `.asmbin`
+   header at boot, so the bigger model needed *no kernel changes*: same
+   27,132-byte binary, 1.7B bound as the Multiboot module (export:
+   1,838,448,832 B). Verified on Robin under KVM: 16/16 boot checks,
+   coherent chat, **20.1 tok/s decode / 23.4 tok/s prefill** (8 cores,
+   Ryzen 9 4900H). Needs `-m 4G` (the 0.6B runs in 2G).
+2. **Sharded-weight exporter** — upstream's exporter assumed a single
+   `model.safetensors`; Qwen3-1.7B+ ship sharded. `TensorStore` now
+   reads the index (or unions the shards when the index is absent).
+   Regression-proof: re-exporting the 0.6B reproduces the known-good
+   SHA256 byte-for-byte.
+3. **Agent framework v2** (`qp_agent.py`) — the Hermes pattern, pulled
+   in properly now that x86 has room: a six-tool registry (CALC/PUT/
+   GET/DEL/LIST/INFO), **persistent memory** (host JSON synced into the
+   kernel FS at boot and back out before halt — the session-only RAM FS
+   gains cross-session memory), a scheduler with raw-line *and* agent
+   jobs (one-shot and repeating), and timestamped session transcripts.
+   Loop discipline learned live: the typed-line echo is stripped before
+   parsing (it contains the instruction text, `SAY:` included), and a
+   tool line that precedes `SAY:` in a reply always runs first — small
+   models write the whole plan at once, hallucinated results and all;
+   the kernel's real result replaces them.
+   **Proven end-to-end on Robin + 1.7B:** session 1 — CALC 123456*789 →
+   kernel's exact 97406784 → PUT → GET → SAY 97406784, note saved;
+   session 2 (fresh boot) — note synced in, GET cold, SAY 97406784.
+   Logs: `boot-logs/qp-x86-robin-17b-agent{1,2}.log`.
+
 ## Verified hosts (2026-11-25)
 
 Same kernel (27,132 bytes, built natively on each host), same model file —
@@ -12,6 +41,7 @@ three machines. 16/16 serial boot checks pass on every host.
 | Muse VM (4 vCPU) | QEMU TCG | 4/4 | — | 0.31 tok/s (parity smoke) | ~100 s |
 | Mac Studio (Apple M5 Max) | QEMU TCG | 8/8 | 5.49 tok/s | 4.28 tok/s | 4.7 s |
 | Robin (Ryzen 9 4900H) | **KVM** (Docker, `--device /dev/kvm`) | 8/8 | 72.9 tok/s | **56.2 tok/s** | 1.5 s |
+| Robin, **Qwen3-1.7B** | **KVM** (same setup) | 8/8 | 23.4 tok/s | **20.1 tok/s** | 1.9 s |
 
 Robin's KVM decode matches upstream's published live figure (55.4 tok/s,
 Xeon E5-2670 v3) — with the Qwenputer additions compiled in. Chat parity

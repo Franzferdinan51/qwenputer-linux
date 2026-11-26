@@ -69,6 +69,54 @@ def load_safetensors_header(path: str):
     return hdr, data_offset
 
 
+class TensorStore:
+    """Reads tensors from a single model.safetensors OR a sharded set
+    (model.safetensors.index.json + model-0000N-of-0000M.safetensors).
+    Qwenputer patch: upstream assumed one file, which breaks for
+    Qwen3-1.7B and larger — they ship sharded."""
+
+    def __init__(self, model_dir: str):
+        self.files: dict[str, tuple] = {}  # path -> (handle, hdr, offset)
+        self.where: dict[str, str] = {}    # tensor name -> path
+        index_path = os.path.join(model_dir, "model.safetensors.index.json")
+        single = os.path.join(model_dir, "model.safetensors")
+        if os.path.exists(index_path):
+            with open(index_path) as f:
+                weight_map = json.load(f)["weight_map"]
+            for name, shard in weight_map.items():
+                self.where[name] = os.path.join(model_dir, shard)
+        elif not os.path.exists(single):
+            # No index file (e.g. a partial download): union the shards.
+            import glob
+            for shard in sorted(glob.glob(os.path.join(model_dir, "model-*.safetensors"))):
+                hdr, _ = load_safetensors_header(shard)
+                for name in hdr:
+                    if name != "__metadata__":
+                        self.where[name] = shard
+        else:
+            hdr, _ = load_safetensors_header(single)
+            for name in hdr:
+                if name != "__metadata__":
+                    self.where[name] = single
+
+    def _file(self, path: str):
+        if path not in self.files:
+            hdr, data_offset = load_safetensors_header(path)
+            self.files[path] = (open(path, "rb"), hdr, data_offset)
+        return self.files[path]
+
+    def __contains__(self, name: str) -> bool:
+        return name in self.where
+
+    def read_f32(self, name: str) -> np.ndarray:
+        f, hdr, data_offset = self._file(self.where[name])
+        return read_tensor_f32(f, hdr, data_offset, name)
+
+    def close(self):
+        for f, _, _ in self.files.values():
+            f.close()
+
+
 def read_tensor_f32(f, hdr, data_offset: int, name: str) -> np.ndarray:
     meta = hdr[name]
     dtype = meta["dtype"]
@@ -238,14 +286,13 @@ def export_model(model_dir: str, out_path: str, max_seq_len: int = 4096, scale_d
     rope_theta = float(cfg["rope_theta"])
     tie_emb = bool(cfg.get("tie_word_embeddings", True))
 
-    st_path = os.path.join(model_dir, "model.safetensors")
     tok_path = os.path.join(model_dir, "tokenizer.json")
-    hdr, data_offset = load_safetensors_header(st_path)
+    store = TensorStore(model_dir)
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     tok_blob = build_tokenizer_blob(tok_path, vocab_size)
 
-    with open(st_path, "rb") as sf, open(out_path, "wb") as out:
+    with open(out_path, "wb") as out:
         # Reserve header
         out.write(b"\x00" * HEADER_SIZE)
 
@@ -255,10 +302,10 @@ def export_model(model_dir: str, out_path: str, max_seq_len: int = 4096, scale_d
 
         # 2. Embeddings (tied with lm_head)
         off_embed = pad64(out)
-        emb = read_tensor_f32(sf, hdr, data_offset, "model.embed_tokens.weight")
+        emb = store.read_f32("model.embed_tokens.weight")
         assert emb.shape == (vocab_size, dim), f"Unexpected embed shape {emb.shape}"
-        if "lm_head.weight" in hdr and tie_emb:
-            lmh = read_tensor_f32(sf, hdr, data_offset, "lm_head.weight")
+        if "lm_head.weight" in store and tie_emb:
+            lmh = store.read_f32("lm_head.weight")
             max_diff = float(np.max(np.abs(emb - lmh)))
             assert max_diff == 0.0, f"tie_word_embeddings=True but diff={max_diff}"
             print("Verified embed_tokens == lm_head exact (max_diff=0.0)")
@@ -275,10 +322,10 @@ def export_model(model_dir: str, out_path: str, max_seq_len: int = 4096, scale_d
             prefix = f"model.layers.{l}"
 
             # 4 FP32 norm vectors
-            in_norm = read_tensor_f32(sf, hdr, data_offset, f"{prefix}.input_layernorm.weight")
-            q_norm = read_tensor_f32(sf, hdr, data_offset, f"{prefix}.self_attn.q_norm.weight")
-            k_norm = read_tensor_f32(sf, hdr, data_offset, f"{prefix}.self_attn.k_norm.weight")
-            post_norm = read_tensor_f32(sf, hdr, data_offset, f"{prefix}.post_attention_layernorm.weight")
+            in_norm = store.read_f32(f"{prefix}.input_layernorm.weight")
+            q_norm = store.read_f32(f"{prefix}.self_attn.q_norm.weight")
+            k_norm = store.read_f32(f"{prefix}.self_attn.k_norm.weight")
+            post_norm = store.read_f32(f"{prefix}.post_attention_layernorm.weight")
 
             assert in_norm.shape == (dim,)
             assert q_norm.shape == (head_dim,)
@@ -302,7 +349,7 @@ def export_model(model_dir: str, out_path: str, max_seq_len: int = 4096, scale_d
             ]
             for name, expected_shape in proj_specs:
                 pad64(out)
-                mat = read_tensor_f32(sf, hdr, data_offset, name)
+                mat = store.read_f32(name)
                 assert mat.shape == expected_shape, f"{name}: got {mat.shape}, expected {expected_shape}"
                 out.write(quantize_matrix_q8_0_row_split(mat, scale_dtype=scale_dtype))
 
@@ -318,7 +365,7 @@ def export_model(model_dir: str, out_path: str, max_seq_len: int = 4096, scale_d
 
         # 4. Final RMSNorm
         off_final_norm = pad64(out)
-        final_norm = read_tensor_f32(sf, hdr, data_offset, "model.norm.weight")
+        final_norm = store.read_f32("model.norm.weight")
         assert final_norm.shape == (dim,)
         out.write(final_norm.astype("<f4").tobytes())
         file_size = pad64(out)

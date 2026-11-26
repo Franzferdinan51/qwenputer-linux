@@ -136,9 +136,20 @@ exported model file is byte-identical on all three — SHA256 `14dc92c1…650279
 
 Robin's KVM number matches upstream's published live figure (55.4 tok/s) — with
 the Qwenputer layer compiled in. Logs in `boot-logs/qp-x86-{mac,robin}-*`.
+
+**v1.1 (same day): Qwen3-1.7B + agent framework v2.** The kernel reads its
+geometry from the model header, so the 1.7B needed *no kernel changes* — same
+27 KB binary, bigger brain: **20.1 tok/s decode on Robin KVM**, 16/16 checks,
+and the exporter learned sharded weights (1.7B+ ship split; the 0.6B
+re-export still hashes byte-identical). The host bridge grew into a full
+agent framework on the Hermes pattern: six tools (CALC/PUT/GET/DEL/LIST/
+INFO), a scheduler with agent jobs, session transcripts, and **persistent
+memory** — notes sync host→kernel at boot and back before halt. Proven
+end-to-end: one session computed 123456×789 in-kernel, saved it, read it
+back; a *fresh boot* recalled it cold (`boot-logs/qp-x86-robin-17b-agent*`).
 Full docs: [`experimental/x86-baremetal/qwenputer/README.md`](experimental/x86-baremetal/qwenputer/README.md),
-roadmap in `qwenputer/UPGRADES.md` (persistence, bigger models, framebuffer/Doom,
-in-kernel scheduler).
+roadmap in `qwenputer/UPGRADES.md` (persistence in-kernel, Qwen3-4B,
+framebuffer/Doom, in-kernel scheduler).
 
 ---
 
