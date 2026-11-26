@@ -123,7 +123,20 @@ Kernel: **27,132 bytes** (upstream 24,252 + 2,880 for the computer layer). Verif
 2026-11-25: all 16 serial boot checks pass in QEMU (`boot-logs/qp-x86-serial-test.out`),
 and a batch chat prompt produces **token-identical output to the pristine upstream
 kernel** (same 25 prefill / 1 decode tokens, same text) — the computer layer changes
-nothing upstream proved. Full docs: [`experimental/x86-baremetal/qwenputer/README.md`](experimental/x86-baremetal/qwenputer/README.md),
+nothing upstream proved.
+
+**Verified on three hosts the same day** (kernel built natively on each; the
+exported model file is byte-identical on all three — SHA256 `14dc92c1…6502796`):
+
+| Host | Accel | Decode |
+|---|---|---|
+| Muse VM (4 vCPU) | QEMU TCG | parity smoke |
+| Mac Studio (Apple M5 Max) | QEMU TCG | 4.28 tok/s |
+| Robin (Ryzen 9 4900H, Docker + KVM) | **KVM** | **56.2 tok/s** (72.9 prefill) |
+
+Robin's KVM number matches upstream's published live figure (55.4 tok/s) — with
+the Qwenputer layer compiled in. Logs in `boot-logs/qp-x86-{mac,robin}-*`.
+Full docs: [`experimental/x86-baremetal/qwenputer/README.md`](experimental/x86-baremetal/qwenputer/README.md),
 roadmap in `qwenputer/UPGRADES.md` (persistence, bigger models, framebuffer/Doom,
 in-kernel scheduler).
 

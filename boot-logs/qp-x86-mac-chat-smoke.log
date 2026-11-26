@@ -1,0 +1,21 @@
+c[?7l[2J[0mSeaBIOS (version rel-1.17.0-0-gb52ca86e094d-prebuilt.qemu.org)
+
+
+iPXE (http://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+7EFD1D60+7EF31D60 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...                                                                               
+
+
+Booting from ROM..
+==============================================================================
+  Qwenputer-X86 v1.0 | asm-llm OS v2.0 | Bare-Metal Qwen3-0.6B, Pure x86-64 Asm
+==============================================================================
+  CPU   : QEMU TCG CPU version 2.5+ (AVX2+FMA, 1000 MHz)
+  SMP   : 8/8 x86-64 cores online (APIC INIT-SIPI-SIPI, lock-free)
+  RAM   : 2047 MiB | Arena: 449 MiB | Boot: 122.24 ms
+  Model : Qwen3-0.6B Q8_0 (614 MiB @ 0x00327000, 28L, ctx=2048)
+==============================================================================
+Prompt: What is 2+2? Answer with just the number.
+2
+[asm-llm-os] prefill: 25 tok in 4550.92 ms (5.49 tok/s)
+[asm-llm-os] decode : 1 tok in 233.82 ms (4.28 tok/s, cores=8) ctx=28/2048
+[asm-llm-os] boot   : ready 122.24 ms | boot->1st-tok 4684.64 ms

@@ -79,3 +79,14 @@ make os-run MODEL=models/qwen3-0.6b-q8_0.asmbin SMP=16   # chat + computer
   KV-cache), larger models (the transformer is hard-wired to Qwen3-0.6B
   geometry), framebuffer graphics. See `UPGRADES.md` for the roadmap and
   how this track relates to the RISC-V in-weights track.
+
+## Verified hosts
+
+Built and boot-tested on three machines on 2026-11-25 — Muse VM (TCG),
+Mac Studio M5 Max (TCG, 4.28 tok/s decode), and Robin, a Ryzen 9 4900H
+mini-PC, under real KVM via Docker: **56.2 tok/s decode / 72.9 tok/s
+prefill**, matching upstream's published live figure with the Qwenputer
+layer compiled in. The exported model file is byte-identical on all
+three hosts. Full table, logs and host runners (`run_mac_test.sh`,
+`run_robin_test.sh`, `Dockerfile.qptest`): see `UPGRADES.md` →
+"Verified hosts".

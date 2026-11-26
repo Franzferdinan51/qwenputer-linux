@@ -1,5 +1,25 @@
 # Qwenputer-X86 — upgrade log & roadmap
 
+## Verified hosts (2026-11-25)
+
+Same kernel (27,132 bytes, built natively on each host), same model file —
+the `.asmbin` export is deterministic: SHA256
+`14dc92c18dfd4182be6627558f716b9e7c5ebf9bc657b0ff700304e5a6502796` on all
+three machines. 16/16 serial boot checks pass on every host.
+
+| Host | Accel | SMP | Prefill | Decode | Boot → 1st tok |
+|---|---|---|---|---|---|
+| Muse VM (4 vCPU) | QEMU TCG | 4/4 | — | 0.31 tok/s (parity smoke) | ~100 s |
+| Mac Studio (Apple M5 Max) | QEMU TCG | 8/8 | 5.49 tok/s | 4.28 tok/s | 4.7 s |
+| Robin (Ryzen 9 4900H) | **KVM** (Docker, `--device /dev/kvm`) | 8/8 | 72.9 tok/s | **56.2 tok/s** | 1.5 s |
+
+Robin's KVM decode matches upstream's published live figure (55.4 tok/s,
+Xeon E5-2670 v3) — with the Qwenputer additions compiled in. Chat parity
+vs the pristine upstream kernel (token-identical output) was verified on
+the VM before the Mac/Robin runs. Logs: `boot-logs/qp-x86-*.out/.log` in
+the repo root. Host runners: `qwenputer/run_mac_test.sh`,
+`qwenputer/run_robin_test.sh`, `qwenputer/Dockerfile.qptest`.
+
 ## Shipped in v1.0 (2026-11-25)
 
 Baseline: upstream llm.asm @ `48feccb` imported whole (shared core, Phase 1
@@ -34,11 +54,11 @@ On top of that baseline:
 |---|---|---|
 | Computer lives | *inside* Qwen3.5-4B's weights (DeltaNet state as RAM) | *beside* Qwen3-0.6B, on the real CPU |
 | OS | Linux 6.1 on the enhanced reference machine | Bare-metal asm kernel, no Linux at all |
-| Speed | ~3,200 trace tok/s (Triton, L4) for the in-weights CPU | 134.9 tok/s chat decode (KVM, 16 vCPU) |
+| Speed | ~3,200 trace tok/s (Triton, L4) for the in-weights CPU | 134.9 tok/s upstream (KVM, 16 vCPU); **56.2 tok/s measured here (KVM, Ryzen 9 4900H, 8 cores)** |
 | Exact calc | In-weights RISC-V program | In-kernel evaluator |
 | Filesystem | In-weights (512 files, persistent across sessions via saved heads) | In-kernel RAM FS (32 files, session only) |
 | Agent | Guest `hermes-agent` + `ask` coprocessor | Host bridge agent loop + scheduler |
-| Status | Linux circuit port into weights still pending | Bootable today; chat is upstream-verified |
+| Status | Linux circuit port into weights still pending | Bootable today; verified on VM, Mac Studio and Robin (see Verified hosts) |
 
 Neither replaces the other: the RISC-V track is the research claim (a
 computer *in* a model), the x86 track is the usable machine (a model *as*
